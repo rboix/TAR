@@ -1,3 +1,6 @@
 [submodule "practica_2_2526"]
 	path = practica_2_2526
 	url = https://github.com/Tecnologia-y-Arquitectura-Robotica/practica_2_2526
+[submodule "practica_1_2526"]
+	path = practica_1_2526
+	url = https://github.com/Tecnologia-y-Arquitectura-Robotica/practica_1_2526
