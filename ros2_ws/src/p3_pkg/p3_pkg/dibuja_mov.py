@@ -18,9 +18,6 @@ TITULOS = {
     3: 'Movimiento 3 — Infinito (∞)',
 }
 
-DIRECTORIO = '/workspace/ros2_ws/src/p3_pkg/dibujos'
-
-
 class DibujaMovimiento(Node):
     """Suscriptor de odometría que acumula posiciones (x, y) y las dibuja."""
 
@@ -78,6 +75,7 @@ class DibujaMovimiento(Node):
 
 
 def main(args=None):
+    global DIRECTORIO
 
     try:
         n = int(sys.argv[1])
@@ -88,6 +86,8 @@ def main(args=None):
     
     if (ruta_guardado == 1):
         DIRECTORIO = '/workspace/ros2_ws/src/p3_pkg/dibujos_controlador'
+    else:
+        DIRECTORIO = '/workspace/ros2_ws/src/p3_pkg/dibujos'
 
 
     rclpy.init(args=args)

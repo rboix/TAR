@@ -43,6 +43,12 @@ class MovimientoRobot(Node):
 
         self.controlador = controlador
 
+        # ── Parámetros de corrección de giro (ajustables en tiempo de ejecución) ──
+        # Factor de escala: si el robot gira de más → valor < 1.0
+        #                   si el robot gira de menos → valor > 1.0
+        # Velocidad angular usada en girar_alternativo
+        self.declare_parameter('angular_vel', 0.2)
+
         self.get_logger().info('Nodo movimiento iniciado.')
 
     #  Callback de odometría                                               
@@ -125,19 +131,19 @@ class MovimientoRobot(Node):
     # Gira un ángulo dado (radianes) usando un controlador proporcional (P).
     # La velocidad angular es proporcional al error restante, lo que reduce el sobreimpulso y mejora la precisión del giro.
     def girar_alternativo(self, angulo: float):
-
         self._wait_odom()
         rclpy.spin_once(self, timeout_sec=0.1)
 
+        angular_vel = self.get_parameter('angular_vel').value
+        # Ya no aplicamos angular_scale al objetivo
+
+        yaw0 = self.yaw
         objetivo = math.atan2(
-            math.sin(self.yaw + angulo),
-            math.cos(self.yaw + angulo))
+            math.sin(yaw0 + angulo),
+            math.cos(yaw0 + angulo))
 
-        KP = 1.5        # ganancia proporcional
-        VEL_MAX = 0.4   # velocidad angular máxima (rad/s)
-        VEL_MIN = 0.03  # velocidad mínima para vencer la inercia
-
-        self.get_logger().info(f'Girando {math.degrees(angulo):.1f}° (controlador P)...')
+        KP = 3.0       # Ganancia un poco mayor para respuesta más ágil
+        VEL_MIN = 0.05 # Suficiente para vencer la inercia
 
         msg = Twist()
         while True:
@@ -145,12 +151,9 @@ class MovimientoRobot(Node):
             error = math.atan2(
                 math.sin(objetivo - self.yaw),
                 math.cos(objetivo - self.yaw))
-
-            if abs(error) < 0.01:  # ~0.57° tolerancia
+            if abs(error) < 0.01:   # ~0.57°
                 break
-
-            # Velocidad proporcional al error, acotada entre VEL_MIN y VEL_MAX
-            vel = max(VEL_MIN, min(VEL_MAX, KP * abs(error)))
+            vel = max(VEL_MIN, min(angular_vel, KP * abs(error)))
             msg.angular.z = vel if error > 0 else -vel
             self.pub_vel.publish(msg)
 
@@ -216,6 +219,7 @@ class MovimientoRobot(Node):
         self.girar(angulo_dos)              # Giro de 240º
 
         self.avanzar(distancia_grande)      # Avanzo 1m
+        self.girar(angulo_uno)              # Giro de 120º
 
         self._parar()
         self.get_logger().info('Movimiento 3 completado.')

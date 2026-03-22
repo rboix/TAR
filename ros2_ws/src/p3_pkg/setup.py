@@ -1,4 +1,6 @@
 from setuptools import setup
+import os
+from glob import glob
 
 package_name = 'p3_pkg'
 
@@ -10,6 +12,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        (os.path.join('share', package_name, 'worlds'), glob('worlds/*.world')),
+        (os.path.join('share', package_name, 'models', 'parking'), glob('models/parking/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +28,7 @@ setup(
             'movimiento = p3_pkg.movimiento:main',
             'dibuja_mov = p3_pkg.dibuja_mov:main',
             'repetir_mov = p3_pkg.repetir_mov:main',
+            'aparcamiento = p3_pkg.aparcamiento:main',
         ],
     },
 )

@@ -207,6 +207,7 @@ class RepetirMovimiento(Node):
         self.girar(angulo_dos)              # Giro de 240º
 
         self.avanzar(distancia_grande)      # Avanzo 1m
+        self.girar(angulo_uno)              # Giro de 120º
 
         self._parar()
         self.get_logger().info('Movimiento 3 completado.')
