@@ -38,7 +38,7 @@ class MovimientoRobot(Node):
         self.odom_received = False
 
         # Velocidades del robot en unidades del SI
-        self.VEL_LINEAL = 0.15   # m/s
+        self.VEL_LINEAL = 0.08   # m/s
         self.VEL_ANGULAR = 0.2   # rad/s
 
         self.controlador = controlador
@@ -64,8 +64,15 @@ class MovimientoRobot(Node):
         while not self.odom_received:
             rclpy.spin_once(self, timeout_sec=0.1)
 
-    # Movimiento básico de avanzar                                        
     def avanzar(self, distancia: float):
+        """Selecciona el método de avance según el controlador."""
+        if self.controlador == 1:
+            return self.avanzar_alternativo(distancia)
+        else:
+            return self.avanzar_normal(distancia)
+
+    # Movimiento básico de avanzar                                        
+    def avanzar_normal(self, distancia: float):
         """
         Avanza una distancia dada (metros) en línea recta.
         Controla el progreso mediante odometría.
@@ -86,6 +93,47 @@ class MovimientoRobot(Node):
 
         self._parar()
         time.sleep(0.5)
+
+
+    def avanzar_alternativo(self, distancia: float):
+        """
+        Avanza una distancia dada (metros) en línea recta,
+        corrigiendo la orientación en tiempo real.
+        """
+        self._wait_odom()
+        rclpy.spin_once(self, timeout_sec=0.1)
+
+        x0, y0 = self.x, self.y
+        yaw_objetivo = self.yaw  # Mantener orientación inicial
+
+        msg = Twist()
+        recorrido = 0.0
+
+        Kp_ang = 2.0  # Ganancia proporcional para corrección angular
+
+        self.get_logger().info(f'Avanzando {distancia:.2f} m con corrección...')
+
+        while recorrido < distancia:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+            # Distancia recorrida
+            recorrido = math.hypot(self.x - x0, self.y - y0)
+
+            # Error angular (normalizado)
+            error_yaw = math.atan2(
+                math.sin(yaw_objetivo - self.yaw),
+                math.cos(yaw_objetivo - self.yaw)
+            )
+
+            # Control
+            msg.linear.x = self.VEL_LINEAL
+            msg.angular.z = Kp_ang * error_yaw
+
+            self.pub_vel.publish(msg)
+
+        self._parar()
+        time.sleep(0.3)
+    
 
     # Movimiento básico de giro
     # Si se pasa un 1 como argumento al nodo, se usará un controlador proporcional (P) para el giro
