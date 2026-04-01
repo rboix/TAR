@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-res_maze.py  –  Resuelve el laberinto usando right-hand wall following
-                con máquina de estados para manejar el inicio desde el centro.
-
-Estados:
-  FIND_WALL   → avanza recto hasta encontrar una pared cercana
-  FOLLOW_WALL → aplica el algoritmo de seguimiento de pared derecha
-"""
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -18,11 +8,11 @@ import math
 # ──────────────────────────────────────────────
 #  Parámetros ajustables
 # ──────────────────────────────────────────────
-LINEAR_SPEED  = 0.15   # m/s
-ANGULAR_SPEED = 0.45   # rad/s
+LINEAR_SPEED  = 0.25  # m/s
+ANGULAR_SPEED = 0.40   # rad/s
 
-WALL_DIST     = 0.40   # distancia para considerar "pared cerca"
-FRONT_DIST    = 0.45   # distancia mínima al frente para avanzar
+WALL_DIST     = 0.35   # distancia para considerar "pared cerca"
+FRONT_DIST    = 0.35   # distancia mínima al frente para avanzar
 
 # Sectores angulares del LiDAR
 FRONT_ANGLES  = list(range(0, 25)) + list(range(335, 360))

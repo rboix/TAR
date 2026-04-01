@@ -18,3 +18,4 @@ docker run --rm -it -e DISPLAY=${DISPLAY} \
         --volume="$PWD:/workspace:rw" -e "TERM=xterm-256color" \
         --name $containerName \
         ros_humble:latest bash
+
