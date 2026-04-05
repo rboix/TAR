@@ -1,36 +1,7 @@
-#!/usr/bin/env python3
-"""
-svg_to_maze.py  –  Convierte un SVG de mazegenerator.net a los tres archivos
-                   necesarios para Gazebo, en el mismo formato que maze_1:
-
-      <nombre>.world        →  worlds/
-      model.sdf             →  models/<nombre>/
-      model.config          →  models/<nombre>/
-
-Uso:
-    python3 svg_to_maze.py <maze.svg> <nombre> [scale] [wall_height] [wall_thickness]
-
-Ejemplos:
-    python3 svg_to_maze.py maze.svg maze_custom
-    python3 svg_to_maze.py maze.svg maze_custom 0.05 2.5 0.15
-
-Argumentos:
-    maze.svg        : archivo SVG exportado desde mazegenerator.net
-    nombre          : nombre base (se usará en los archivos y en Gazebo)
-    scale           : metros por píxel SVG          (default: 0.05)
-    wall_height     : altura de las paredes en m    (default: 2.5)
-    wall_thickness  : grosor de las paredes en m    (default: 0.15)
-"""
-
 import sys
 import os
 import math
 import xml.etree.ElementTree as ET
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  1. Parsear el SVG
-# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_svg_lines(svg_path: str):
     tree = ET.parse(svg_path)
@@ -43,11 +14,6 @@ def parse_svg_lines(svg_path: str):
         y2 = float(line.get('y2', 0))
         lines.append((x1, y1, x2, y2))
     return lines
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  2. Convertir líneas SVG → datos de paredes Gazebo
-# ──────────────────────────────────────────────────────────────────────────────
 
 def compute_walls(lines, scale, wall_height, wall_thickness):
     all_x = [v for seg in lines for v in (seg[0], seg[2])]
@@ -63,7 +29,6 @@ def compute_walls(lines, scale, wall_height, wall_thickness):
         if length < 0.01:
             continue
 
-        # Centro en coordenadas Gazebo (Y invertida respecto a SVG)
         wx  = ((x1 + x2) / 2.0 - cx) * scale
         wy  = -((y1 + y2) / 2.0 - cy) * scale
         yaw = math.atan2(-(y2 - y1), (x2 - x1))
@@ -78,11 +43,6 @@ def compute_walls(lines, scale, wall_height, wall_thickness):
             'thickness': wall_thickness,
         })
     return walls
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  3. Generar el bloque SDF de links (compartido por .world y model.sdf)
-# ──────────────────────────────────────────────────────────────────────────────
 
 def wall_link_sdf(w, indent='    ') -> str:
     i  = w['index']
@@ -123,11 +83,6 @@ def wall_link_sdf(w, indent='    ') -> str:
 {indent}  <enable_wind>0</enable_wind>
 {indent}  <kinematic>0</kinematic>
 {indent}</link>"""
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  4. Generar <nombre>.world   (mismo formato que maze_1.world)
-# ──────────────────────────────────────────────────────────────────────────────
 
 def generate_world(walls, name, output_path):
     links_str = '\n'.join(wall_link_sdf(w, indent='        ') for w in walls)
@@ -234,11 +189,6 @@ def generate_world(walls, name, output_path):
         f.write(content)
     print(f"  [OK] {output_path}")
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  5. Generar model.sdf   (mismo formato que el model.sdf de maze_1)
-# ──────────────────────────────────────────────────────────────────────────────
-
 def generate_model_sdf(walls, name, output_path):
     links_str = '\n'.join(wall_link_sdf(w, indent='    ') for w in walls)
 
@@ -254,11 +204,6 @@ def generate_model_sdf(walls, name, output_path):
     with open(output_path, 'w') as f:
         f.write(content)
     print(f"  [OK] {output_path}")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  6. Generar model.config   (mismo formato que el de maze_1)
-# ──────────────────────────────────────────────────────────────────────────────
 
 def generate_model_config(name, output_path):
     content = f"""<?xml version="1.0" ?>
@@ -277,10 +222,6 @@ def generate_model_config(name, output_path):
         f.write(content)
     print(f"  [OK] {output_path}")
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  7. Generar launch file
-# ──────────────────────────────────────────────────────────────────────────────
 
 def generate_launch(name, output_path):
     content = f"""#!/usr/bin/env python3
@@ -342,10 +283,6 @@ def generate_launch_description():
     print(f"  [OK] {output_path}")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  Main
-# ──────────────────────────────────────────────────────────────────────────────
-
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -376,23 +313,7 @@ def main():
     generate_model_config(      name, os.path.join(model_dir, 'model.config'))
     generate_launch(            name, os.path.join('launch',  f'{name}.launch.py'))
 
-    print(f"""
-Listo. Copia las carpetas generadas a tu paquete:
-
-    cp worlds/{name}.world          ros2_ws/src/maze_pkg/worlds/
-    cp -r models/{name}/            ros2_ws/src/maze_pkg/models/
-    cp launch/{name}.launch.py      ros2_ws/src/maze_pkg/launch/
-
-Añade en setup.py de maze_pkg:
-    (os.path.join('share', package_name, 'models', '{name}'),
-        glob('models/{name}/*')),
-
-Luego:
-    cd ros2_ws && colcon build --symlink-install --packages-select maze_pkg
-    source install/setup.bash
-    export TURTLEBOT3_MODEL=waffle
-    ros2 launch maze_pkg {name}.launch.py
-""")
+    print("\nCopia los archivos generados al paquete")
 
 
 if __name__ == '__main__':
