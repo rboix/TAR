@@ -16,6 +16,21 @@ docker run --rm -it -e DISPLAY=${DISPLAY} \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw --network host \
         --workdir="/workspace" \
         --volume="$PWD:/workspace:rw" -e "TERM=xterm-256color" \
+        --volume="$PWD/yahboomcar_ws:/root/yahboomcar_ws" \
         --name $containerName \
         ros_humble:latest bash
 
+# docker run --rm -it \
+#     --gpus all \
+#     --runtime=nvidia \
+#     -e DISPLAY=$DISPLAY \
+#     -e NVIDIA_VISIBLE_DEVICES=all \
+#     -e NVIDIA_DRIVER_CAPABILITIES=all \
+#     -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+#     -v /tmp/.X11-unix:/tmp/.X11-unix \
+#     -v /dev/dri:/dev/dri \
+#     --network host \
+#     --workdir="/workspace" \
+#     --volume="$PWD:/workspace:rw" \
+#     --name $containerName \
+#     ros_humble:latest bash
