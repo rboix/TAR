@@ -34,7 +34,6 @@ setup(
     entry_points={
         'console_scripts': [
             'res_maze = maze_pkg.res_maze:main',
-            'res_maze2 = maze_pkg.res_maze2:main',
         ],
     },
 )

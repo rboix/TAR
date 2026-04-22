@@ -11,10 +11,10 @@ import math
 LINEAR_SPEED  = 0.25  # m/s
 ANGULAR_SPEED = 0.40   # rad/s
 
-WALL_DIST     = 0.35   # distancia para considerar "pared cerca"
-FRONT_DIST    = 0.35   # distancia mínima al frente para avanzar
+WALL_DIST     = 0.35   # distancia de pared lateral
+FRONT_DIST    = 0.35   # distancia de pared frontal
 
-# Sectores angulares del LiDAR
+
 FRONT_ANGLES  = list(range(0, 25)) + list(range(335, 360))
 LEFT_ANGLES   = list(range(60, 120))
 RIGHT_ANGLES  = list(range(240, 300))
@@ -34,11 +34,7 @@ class MazeSolver(Node):
 
         self.ranges = []
         self.state  = FIND_WALL
-        self.get_logger().info("MazeSolver iniciado – buscando pared...")
-
-    # ──────────────────────────────────────────
-    #  Utilidades LiDAR
-    # ──────────────────────────────────────────
+        self.get_logger().info("MazeSolver iniciado - buscando pared...")
 
     def get_distance(self, angles: list) -> float:
         """Distancia mínima válida en el sector indicado."""
@@ -51,10 +47,6 @@ class MazeSolver(Node):
                 valid.append(r)
         return min(valid) if valid else float('inf')
 
-    # ──────────────────────────────────────────
-    #  Comandos de movimiento
-    # ──────────────────────────────────────────
-
     def cmd(self, linear: float, angular: float):
         msg = Twist()
         msg.linear.x  = linear
@@ -63,10 +55,6 @@ class MazeSolver(Node):
 
     def stop(self):
         self.pub.publish(Twist())
-
-    # ──────────────────────────────────────────
-    #  Callback principal
-    # ──────────────────────────────────────────
 
     def scan_callback(self, msg: LaserScan):
         self.ranges = list(msg.ranges)
@@ -85,11 +73,7 @@ class MazeSolver(Node):
         elif self.state == FOLLOW_WALL:
             self.do_follow_wall(front, left, right)
 
-    # ──────────────────────────────────────────
-    #  Estado 1: FIND_WALL
-    #  Avanza recto hasta que hay una pared cerca
-    #  por cualquier lado → pasa a FOLLOW_WALL
-    # ──────────────────────────────────────────
+    # Estado para buscar pared
 
     def do_find_wall(self, front: float):
         right = self.get_distance(RIGHT_ANGLES)
@@ -101,33 +85,27 @@ class MazeSolver(Node):
         else:
             self.cmd(LINEAR_SPEED, 0.0)
 
-    # ──────────────────────────────────────────
-    #  Estado 2: FOLLOW_WALL (right-hand rule)
-    # ──────────────────────────────────────────
+    # Estado para seguir pared
 
     def do_follow_wall(self, front: float, left: float, right: float):
 
         if front < FRONT_DIST:
-            # Pared al frente → girar izquierda en sitio
-            self.get_logger().info("↺ Pared al frente – giro izquierda",
+            self.get_logger().info("Pared al frente - giro izquierda",
                                    throttle_duration_sec=0.5)
             self.cmd(0.0, ANGULAR_SPEED)
 
         elif right > WALL_DIST * 1.5:
-            # Mucho espacio a la derecha → girar derecha avanzando
-            self.get_logger().info("→ Abriendo derecha – curva derecha",
+            self.get_logger().info("Abriendo derecha curva derecha",
                                    throttle_duration_sec=0.5)
             self.cmd(LINEAR_SPEED, -ANGULAR_SPEED * 0.8)
 
         elif right < WALL_DIST * 0.6:
-            # Demasiado cerca de la pared derecha → corregir izquierda
-            self.get_logger().info("← Muy cerca pared der – corrección izq",
+            self.get_logger().info("Muy cerca pared der - corrección izq",
                                    throttle_duration_sec=0.5)
             self.cmd(LINEAR_SPEED, ANGULAR_SPEED * 0.5)
 
         else:
-            # Pasillo libre → avanzar recto
-            self.get_logger().info("↑ Avanzando recto",
+            self.get_logger().info("Avanzando recto",
                                    throttle_duration_sec=0.5)
             self.cmd(LINEAR_SPEED, 0.0)
 
