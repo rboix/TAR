@@ -54,3 +54,6 @@ qtcreator-*
 CATKIN_IGNORE
 
 .vscode/
+
+Practica\ 3/docker-compose.yml
+Practica\ 3/Dockerfile
