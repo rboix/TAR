@@ -54,3 +54,14 @@ qtcreator-*
 CATKIN_IGNORE
 
 .vscode/
+CLAUDE.md
+credenciales.json
+
+# Embodied agent - claves API y builds
+.env
+*.egg-info/
+__pycache__/
+*.pyc
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
