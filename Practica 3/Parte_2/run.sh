@@ -26,5 +26,7 @@ docker run --rm -it \
     -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
     --device /dev/snd \
     --group-add audio \
+    -v /run/user/$(id -u)/pulse:/run/user/$(id -u)/pulse \
+    -e PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
     --name $containerName \
     embodied_agent:latest bash

@@ -64,7 +64,7 @@ RUN sudo apt-get install -y \
     python3-colcon-common-extensions
 
 # Python deps for embodied agent
-RUN pip3 install --upgrade pip
+RUN pip3 install --upgrade pip coverage
 RUN pip3 install \
     google-genai \
     google-auth \
@@ -90,6 +90,9 @@ RUN pip3 install openai-whisper
 
 # ROS 2 Python client
 RUN pip3 install empy lark
+
+# Evita conflicto entre numba (whisper) y coverage de ROS 2
+ENV NUMBA_DISABLE_JIT=1
 
 # Source ROS 2 by default
 RUN echo "source /opt/ros/humble/setup.bash" >> /home/$USERNAME/.bashrc
