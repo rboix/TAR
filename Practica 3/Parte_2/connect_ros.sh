@@ -1,3 +1,3 @@
 #!/bin/bash
 # Conecta una nueva terminal al contenedor embodied_agent ya en ejecución
-docker exec -it embodied_agent /bin/bash
+docker exec -it embodied_agent bash -c "cd /workspace/ros2_ws && colcon build --symlink-install; exec bash"

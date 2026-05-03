@@ -8,7 +8,7 @@ from google.genai import types
 
 
 CREDENTIALS_PATH = Path(__file__).parents[4] / 'credenciales.json'
-GEMINI_MODEL = 'gemini-2.0-flash-lite'
+GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
 
 _client: genai.Client | None = None
 

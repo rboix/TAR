@@ -74,7 +74,7 @@ RUN pip3 install \
     pygame \
     sounddevice \
     pyaudio \
-    numpy \
+    "numpy<2" \
     opencv-python \
     Pillow \
     pydantic \

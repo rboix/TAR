@@ -24,9 +24,10 @@ docker run --rm -it \
     -e ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY}" \
     -e ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID}" \
     -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+    --cap-add=SYS_TIME \
     --device /dev/snd \
     --group-add audio \
     -v /run/user/$(id -u)/pulse:/run/user/$(id -u)/pulse \
     -e PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
     --name $containerName \
-    embodied_agent:latest bash
+    embodied_agent:latest bash -c "sudo hwclock --hctosys 2>/dev/null || true; cd /workspace/ros2_ws && colcon build --symlink-install; exec bash"

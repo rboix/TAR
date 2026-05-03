@@ -49,3 +49,34 @@ Terminal 2:
 ```bash
 ros2 topic echo /user_speech
 ```
+
+---
+
+## Fase 2 — Cerebro mínimo
+
+Implementación de `brain_node` con llamada a Gemini.
+
+- `brain_node` se suscribe a `/user_speech` y `/camera/image_raw`
+- Cuando recibe texto del usuario, captura el último frame de la cámara y llama a Gemini
+- Parsea la respuesta JSON y la guarda de forma incremental en `/workspace/interactions.jsonl`
+- Publica `True` en `/brain_ready` al terminar para que `audio_in_node` vuelva a escuchar
+- `gemini_client` se autentica con `credenciales.json` vía Vertex AI
+
+### Prueba: probar `brain_node` con conversación de texto
+
+Terminal 1:
+```bash
+ros2 run embodied_agent brain_node
+```
+
+Terminal 2 (simular voz del usuario):
+```bash
+ros2 topic pub --once /user_speech std_msgs/msg/String "data: '¿qué ves a tu alrededor?'"
+```
+
+Terminal 3 (ver que brain_ready se publica):
+```bash
+ros2 topic echo /brain_ready
+```
+
+Las interacciones se guardan en `/workspace/interactions.jsonl` (una línea JSON por interacción).
