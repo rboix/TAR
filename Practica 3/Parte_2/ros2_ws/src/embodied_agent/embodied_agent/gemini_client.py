@@ -7,10 +7,29 @@ from google import genai
 from google.genai import types
 
 
-CREDENTIALS_PATH = Path(__file__).parents[4] / 'credenciales.json'
-GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
+GEMINI_MODEL = 'publishers/google/models/gemini-3.1-flash-lite'
 
 _client: genai.Client | None = None
+
+
+def _find_credentials() -> Path:
+    env_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates += [
+        Path('/workspace/credenciales.json'),
+        Path(__file__).parents[4] / 'credenciales.json',
+        Path.cwd() / 'credenciales.json',
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        'No se encontró credenciales.json. Buscado en: '
+        + ', '.join(str(c) for c in candidates)
+        + '. Colócalo en Practica 3/Parte_2/credenciales.json'
+    )
 
 
 def get_client() -> genai.Client:
@@ -18,15 +37,10 @@ def get_client() -> genai.Client:
     if _client is not None:
         return _client
 
-    if not CREDENTIALS_PATH.exists():
-        raise FileNotFoundError(
-            f'No se encontró credenciales.json en {CREDENTIALS_PATH}. '
-            'Colócalo en Practica 3/Parte_2/credenciales.json'
-        )
-
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(CREDENTIALS_PATH)
-    project = json.loads(CREDENTIALS_PATH.read_text()).get('project_id', '')
-    _client = genai.Client(vertexai=True, project=project)
+    cred_path = _find_credentials()
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(cred_path)
+    project = json.loads(cred_path.read_text()).get('project_id', '')
+    _client = genai.Client(vertexai=True, project=project, location='global')
     return _client
 
 

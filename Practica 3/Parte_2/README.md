@@ -80,3 +80,6 @@ ros2 topic echo /brain_ready
 ```
 
 Las interacciones se guardan en `/workspace/interactions.jsonl` (una línea JSON por interacción).
+
+
+ros2 launch embodied_agent embodied_agent_sim.launch.py

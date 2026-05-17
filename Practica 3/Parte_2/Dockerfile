@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
-ARG USERNAME
-ARG USER_UID
+ARG USERNAME=raul
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -55,13 +55,24 @@ RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/r
 RUN sudo apt-get update && sudo apt-get upgrade -y
 RUN sudo apt-get install -y ros-humble-desktop ros-dev-tools
 RUN sudo apt-get install -y \
-    ros-humble-turtlebot4-simulator \
-    ros-humble-irobot-create-nodes \
+    ros-humble-turtlebot4-msgs \
     ros-humble-turtlebot4-navigation \
     ros-humble-nav2-bringup \
     ros-humble-cv-bridge \
     ros-humble-vision-opencv \
     python3-colcon-common-extensions
+
+# TurtleBot 3 + Gazebo Classic 11 — sim ligera, sin Ogre2 (compatible con GPU AMD)
+RUN sudo apt-get install -y \
+    gazebo \
+    ros-humble-gazebo-ros-pkgs \
+    ros-humble-gazebo-ros2-control \
+    ros-humble-turtlebot3 \
+    ros-humble-turtlebot3-msgs \
+    ros-humble-turtlebot3-simulations \
+    ros-humble-turtlebot3-gazebo \
+    ros-humble-turtlebot3-description \
+    ros-humble-xacro
 
 # Python deps for embodied agent
 RUN pip3 install --upgrade pip coverage
@@ -98,5 +109,7 @@ ENV NUMBA_DISABLE_JIT=1
 RUN echo "source /opt/ros/humble/setup.bash" >> /home/$USERNAME/.bashrc
 RUN echo "source /workspace/ros2_ws/install/setup.bash 2>/dev/null || true" >> /home/$USERNAME/.bashrc
 RUN echo "export PYTHONPATH=\$PYTHONPATH:/workspace/ros2_ws/install/embodied_agent/lib/python3.10/site-packages" >> /home/$USERNAME/.bashrc
+RUN echo "export TURTLEBOT3_MODEL=waffle" >> /home/$USERNAME/.bashrc
+RUN echo "export GAZEBO_MODEL_PATH=\$GAZEBO_MODEL_PATH:/opt/ros/humble/share/turtlebot3_gazebo/models" >> /home/$USERNAME/.bashrc
 
 USER $USERNAME

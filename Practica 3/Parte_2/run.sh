@@ -10,6 +10,17 @@ if [ -f "$(dirname "$0")/.env" ]; then
 fi
 
 export containerName=embodied_agent
+export imageName=embodied_agent:latest
+
+# Construye la imagen si no existe localmente
+if ! docker image inspect "$imageName" >/dev/null 2>&1; then
+    echo "[run.sh] Imagen $imageName no encontrada, construyendo..."
+    docker build \
+        --build-arg USERNAME="$USER" \
+        --build-arg USER_UID="$(id -u)" \
+        --build-arg USER_GID="$(id -g)" \
+        -t "$imageName" "$(dirname "$0")" || { echo "[run.sh] Build falló"; exit 1; }
+fi
 
 sleep 1 && \
     xhost +local:$(docker inspect --format='{{ .Config.Hostname }}' $containerName 2>/dev/null) >/dev/null 2>&1 &
