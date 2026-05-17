@@ -54,15 +54,29 @@ RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/r
     | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 RUN sudo apt-get update && sudo apt-get upgrade -y
 RUN sudo apt-get install -y ros-humble-desktop ros-dev-tools
+
+# TurtleBot 4: paquete simulator + msgs + navigation (mismo set que el Dockerfile
+# de la Parte 1, donde Ignition funcionaba).
 RUN sudo apt-get install -y \
+    ros-humble-turtlebot4-simulator \
     ros-humble-turtlebot4-msgs \
     ros-humble-turtlebot4-navigation \
+    ros-humble-irobot-create-nodes \
     ros-humble-nav2-bringup \
     ros-humble-cv-bridge \
     ros-humble-vision-opencv \
     python3-colcon-common-extensions
 
-# TurtleBot 3 + Gazebo Classic 11 — sim ligera, sin Ogre2 (compatible con GPU AMD)
+# Ignition Fortress desde el repositorio oficial de OSRF. Se instala como binarios
+# nativos (no solo via paquetes ROS) — es lo que hace que la sim TB4 arranque sin
+# sorpresas en distintas máquinas (truco probado en Practica 3 Parte 1).
+RUN sudo sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" > /etc/apt/sources.list.d/gazebo-stable.list' \
+    && wget http://packages.osrfoundation.org/gazebo.key -O - | sudo apt-key add - \
+    && sudo apt-get update \
+    && sudo apt-get install -y ignition-fortress
+
+# TurtleBot 3 + Gazebo Classic 11 — fallback ligero si Ignition vuelve a fallar
+# con la GPU AMD (sin Ogre2).
 RUN sudo apt-get install -y \
     gazebo \
     ros-humble-gazebo-ros-pkgs \
