@@ -1,4 +1,4 @@
-## Fase 0 — Configuración del entorno
+## Fase 0 - Configuración del entorno
 
 Hay que configurar las claves en el .env para que funcione todo
 
@@ -16,7 +16,7 @@ ros2 launch embodied_agent embodied_agent.launch.py  # Prueba inicial para ver q
 
 ---
 
-## Fase 1 — Voz
+## Fase 1 - Voz
 
 Implementación de lo relacionado con la voz.
 
@@ -52,7 +52,7 @@ ros2 topic echo /user_speech
 
 ---
 
-## Fase 2 — Cerebro mínimo
+## Fase 2 - Cerebro mínimo
 
 Implementación de `brain_node` con llamada a Gemini.
 
@@ -82,5 +82,8 @@ ros2 topic echo /brain_ready
 Las interacciones se guardan en `/workspace/interactions.jsonl` (una línea JSON por interacción).
 
 
-ros2 launch embodied_agent embodied_agent_sim_tb4.launch.py
+## Fase 3 - Ajustar a detective
+```bash
+ros2 launch embodied_agent embodied_agent_sim_tb4_detective.launch.py
+```
 

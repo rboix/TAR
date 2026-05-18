@@ -18,6 +18,12 @@ from std_msgs.msg import String, Bool
 WHISPER_SR = 16000  # tasa que espera Whisper
 CHUNK_SIZE = 1024   # frames por bloque
 WINDOW_SECS = 5     # segundos por ventana de grabación
+WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE', 'small')
+WHISPER_PROMPT = (
+    'Robot detective en un laboratorio. Investiga la escena. '
+    'Acércate, inspecciona, panorámica, gira, vuelve. '
+    'Mochila, botella, papeles, silla, llaves, pistas, derrame, huida.'
+)
 
 
 def _resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
@@ -35,17 +41,25 @@ def _load_whisper_safe():
     os.environ['NUMBA_DISABLE_JIT'] = '1'
     os.environ.pop('COVERAGE_PROCESS_START', None)
     import whisper
-    return whisper.load_model('base')
+    return whisper.load_model(WHISPER_MODEL_SIZE)
 
 
 class AudioInNode(Node):
+    # Tras un TTS, ignoramos N segundos extra para descartar el eco residual
+    # que quedó en el buffer del stream antes de marcar el robot como callado.
+    POST_SPEECH_TAIL_S = 2.5
+
     def __init__(self):
         super().__init__('audio_in_node')
         self._pub = self.create_publisher(String, '/user_speech', 10)
         self._sub_ready = self.create_subscription(
             Bool, '/brain_ready', self._on_brain_ready, 10)
+        self._sub_speaking = self.create_subscription(
+            Bool, '/robot_speaking', self._on_robot_speaking, 10)
         self._whisper_model = None
         self._brain_ready = True  # al inicio está listo
+        self._robot_speaking = False
+        self._mute_until = 0.0  # timestamp hasta el cual ignorar el mic
 
         threading.Thread(target=self._load_whisper, daemon=True).start()
         threading.Thread(target=self._capture_loop, daemon=True).start()
@@ -56,10 +70,26 @@ class AudioInNode(Node):
             self._brain_ready = True
             self.get_logger().info('Brain listo — escuchando de nuevo')
 
+    def _on_robot_speaking(self, msg: Bool):
+        import time as _t
+        if msg.data:
+            self._robot_speaking = True
+            # Tira cualquier transcripción parcial: si vino de mientras el
+            # robot arrancaba a hablar, casi seguro es eco.
+            with self._accumulate_lock:
+                self._accumulated.clear()
+                if self._silence_timer:
+                    self._silence_timer.cancel()
+                    self._silence_timer = None
+            self.get_logger().info('Robot hablando — mic en silencio')
+        else:
+            self._robot_speaking = False
+            self._mute_until = _t.monotonic() + self.POST_SPEECH_TAIL_S
+
     def _load_whisper(self):
         try:
             self._whisper_model = _load_whisper_safe()
-            self.get_logger().info('Whisper modelo "base" cargado')
+            self.get_logger().info(f'Whisper modelo "{WHISPER_MODEL_SIZE}" cargado')
         except Exception as e:
             self.get_logger().error(f'Error cargando Whisper: {e}')
 
@@ -113,10 +143,10 @@ class AudioInNode(Node):
             for _ in range(10):
                 stream.read(CHUNK_SIZE)
 
+            import time
             while rclpy.ok():
                 # Espera a que brain_node termine el ciclo anterior
                 if not self._brain_ready:
-                    import time
                     time.sleep(0.1)
                     continue
 
@@ -129,6 +159,11 @@ class AudioInNode(Node):
                     window.append(block.flatten())
 
                 if not window:
+                    continue
+
+                # Si el robot está hablando, o todavía estamos en el tail
+                # post-TTS, tira la ventana entera. Es eco, no usuario.
+                if self._robot_speaking or time.monotonic() < self._mute_until:
                     continue
 
                 audio = np.concatenate(window)
@@ -180,6 +215,13 @@ class AudioInNode(Node):
             self._pub.publish(msg)
 
     def _transcribe(self, audio: np.ndarray) -> tuple[str, bool]:
+        # Cortocircuito en silencio: el mel-spectrogram de Whisper degenera
+        # (tensores de 0 elementos o llenos de NaN) cuando la ventana es
+        # prácticamente muda y los reshape/categorical crashean.
+        rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float32)))))
+        if not np.isfinite(rms) or rms < 0.001:
+            return '', False
+
         tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
@@ -190,7 +232,8 @@ class AudioInNode(Node):
                 wf.setsampwidth(2)
                 wf.setframerate(WHISPER_SR)
                 wf.writeframes(audio_int16.tobytes())
-            result = self._whisper_model.transcribe(tmp_path, language='es')
+            result = self._whisper_model.transcribe(
+                tmp_path, language='es', initial_prompt=WHISPER_PROMPT)
             segs = result.get('segments', [])
             no_speech = segs[0].get('no_speech_prob', 1.0) if segs else 1.0
             text = result.get('text', '').strip()

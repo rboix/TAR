@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!-- Botella tumbada en el suelo. Pose final la fija el spawn (rotada con
+     pitch≈1.5708 para que quede acostada a lo largo del eje X). -->
+<sdf version="1.8">
+  <model name="bottle_spilled">
+    <link name="link">
+      <inertial>
+        <mass>0.3</mass>
+        <inertia>
+          <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.0005</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="c">
+        <geometry><cylinder><radius>0.035</radius><length>0.22</length></cylinder></geometry>
+      </collision>
+      <visual name="body">
+        <geometry><cylinder><radius>0.035</radius><length>0.22</length></cylinder></geometry>
+        <material>
+          <ambient>0.10 0.45 0.18 1</ambient>
+          <diffuse>0.15 0.65 0.25 1</diffuse>
+          <specular>0.2 0.4 0.2 1</specular>
+        </material>
+      </visual>
+      <visual name="cap">
+        <pose>0 0 0.115 0 0 0</pose>
+        <geometry><cylinder><radius>0.025</radius><length>0.015</length></cylinder></geometry>
+        <material>
+          <ambient>0.15 0.15 0.15 1</ambient>
+          <diffuse>0.20 0.20 0.20 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -18,6 +18,8 @@ setup(
             glob('config/*.yaml')),
         (os.path.join('share', package_name, 'worlds'),
             glob('worlds/*.world') + glob('worlds/*.sdf')),
+        (os.path.join('share', package_name, 'worlds', 'detective_scene'),
+            glob('worlds/detective_scene/*.sdf')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

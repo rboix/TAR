@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- Hoja de papel — caja muy fina blanca. -->
+<sdf version="1.8">
+  <model name="paper">
+    <static>true</static>
+    <link name="link">
+      <collision name="c">
+        <geometry><box><size>0.21 0.297 0.001</size></box></geometry>
+      </collision>
+      <visual name="v">
+        <geometry><box><size>0.21 0.297 0.001</size></box></geometry>
+        <material>
+          <ambient>0.92 0.92 0.90 1</ambient>
+          <diffuse>0.98 0.98 0.96 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

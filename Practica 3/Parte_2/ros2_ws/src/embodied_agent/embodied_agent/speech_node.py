@@ -5,7 +5,7 @@ Sintetiza texto con ElevenLabs (fallback gTTS) y reproduce el audio.
 import threading
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from embodied_agent.tts_client import speak
 
@@ -15,6 +15,9 @@ class SpeechNode(Node):
         super().__init__('speech_node')
         self._sub = self.create_subscription(
             String, '/robot_speech', self._on_speech, 10)
+        # Publica True mientras suena el TTS para que el audio_in_node
+        # silencie el micro y no transcriba la propia voz del robot.
+        self._pub_speaking = self.create_publisher(Bool, '/robot_speaking', 10)
         self._speaking = False
         self._lock = threading.Lock()
         self.get_logger().info('speech_node arrancado')
@@ -36,11 +39,13 @@ class SpeechNode(Node):
     # Libera el flag _speaking al finalizar, incluso si ocurre un error, para permitir futuros mensajes.
     def _play(self, text: str):
         self.get_logger().info(f'[speech] reproduciendo: "{text}"')
+        self._pub_speaking.publish(Bool(data=True))
         try:
             speak(text)
         except Exception as e:
             self.get_logger().error(f'[speech] error TTS: {e}')
         finally:
+            self._pub_speaking.publish(Bool(data=False))
             with self._lock:
                 self._speaking = False
 

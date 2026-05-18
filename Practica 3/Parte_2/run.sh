@@ -41,4 +41,4 @@ docker run --rm -it \
     -v /run/user/$(id -u)/pulse:/run/user/$(id -u)/pulse \
     -e PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
     --name $containerName \
-    embodied_agent:latest bash -c "sudo hwclock --hctosys 2>/dev/null || true; cd /workspace/ros2_ws && colcon build --symlink-install; exec bash"
+    embodied_agent:latest bash -c "ulimit -c 0; sudo hwclock --hctosys 2>/dev/null || true; cd /workspace/ros2_ws && colcon build --symlink-install; exec bash"

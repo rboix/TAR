@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!-- Charco de agua: cilindro plano, semitransparente, static. -->
+<sdf version="1.8">
+  <model name="water_puddle">
+    <static>true</static>
+    <link name="link">
+      <visual name="v">
+        <geometry><cylinder><radius>0.18</radius><length>0.004</length></cylinder></geometry>
+        <material>
+          <ambient>0.10 0.30 0.55 0.6</ambient>
+          <diffuse>0.20 0.45 0.80 0.6</diffuse>
+          <specular>0.6 0.7 0.9 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
