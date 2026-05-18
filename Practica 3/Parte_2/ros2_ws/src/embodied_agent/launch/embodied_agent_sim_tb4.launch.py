@@ -48,6 +48,7 @@ def generate_launch_description():
     yaw = LaunchConfiguration('yaw')
     use_rviz = LaunchConfiguration('rviz')
     software_rendering = LaunchConfiguration('software_rendering')
+    spawn_dock = LaunchConfiguration('dock')
 
     # Workaround AMD GPU: render por software (solo si lo pides). Lento pero
     # estable. Si tu GPU se entiende bien con Ogre2 deja software_rendering=false
@@ -76,6 +77,12 @@ def generate_launch_description():
             'y': y,
             'yaw': yaw,
             'rviz': use_rviz,
+            # El dock (turtlebot4/standard_dock) se spawnea por defecto
+            # 0.5 m delante del robot y bloquea la cámara para nuestra
+            # escena Caso A. Lo desactivamos por defecto y se puede
+            # reactivar con `dock:=true` si en algún momento quieres
+            # probar comportamientos de docking/undocking.
+            'dock': spawn_dock,
         }.items(),
     )
 
@@ -90,7 +97,10 @@ def generate_launch_description():
             parameters=[{'robot_ns': namespace, 'use_sim_time': True}],
             remappings=[
                 ('/camera/image_raw', ['/', namespace, '/oakd/rgb/preview/image_raw']),
-                ('/camera/depth',     ['/', namespace, '/oakd/stereo/image_raw']),
+                # depth alineada al RGB preview (misma resolución, mismo
+                # frame) — el bbox de Gemini se proyecta píxel a píxel
+                # sobre esta depth sin necesidad de reescalar intrínsecos.
+                ('/camera/depth',     ['/', namespace, '/oakd/rgb/preview/depth']),
                 ('/scan',             ['/', namespace, '/scan']),
                 ('/odom',             ['/', namespace, '/odom']),
             ],
@@ -104,8 +114,24 @@ def generate_launch_description():
             name='action_executor_node', output='screen',
             parameters=[{'robot_ns': namespace, 'use_sim_time': True}],
             remappings=[
-                ('/cmd_vel',          ['/', namespace, '/cmd_vel']),
-                ('/navigate_to_pose', ['/', namespace, '/navigate_to_pose']),
+                # Navegación open-loop: el executor sólo necesita
+                # /cmd_vel (movimiento), /odom (feedback de pose) y
+                # depth + camera_info (para extraer ángulo y distancia
+                # del bbox de Gemini). No tocamos tf ni Nav2.
+                #
+                # IMPORTANTE: publicamos directamente al ros2_control del
+                # diff drive y NO a /turtlebot4/cmd_vel. ¿Por qué?
+                # /turtlebot4/cmd_vel pasa por el motion_control del
+                # Create 3, que aplica reflejos (bumper, hazards, undock)
+                # — esos reflejos pueden invertir nuestra velocidad si
+                # creen detectar un obstáculo, haciendo que el robot
+                # oscile adelante-atrás. Para una demo open-loop limpia
+                # nos saltamos esa capa y mandamos ruedas directas.
+                ('/cmd_vel',          ['/', namespace, '/diffdrive_controller/cmd_vel_unstamped']),
+                ('/odom',             ['/', namespace, '/odom']),
+                ('/camera/depth',     ['/', namespace, '/oakd/rgb/preview/depth']),
+                ('/camera/camera_info',
+                    ['/', namespace, '/oakd/rgb/preview/camera_info']),
             ],
         ),
     ]
@@ -120,6 +146,9 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('software_rendering', default_value='false',
                               description='Forzar render por CPU si GPU AMD crashea Ogre2'),
+        DeclareLaunchArgument('dock', default_value='false',
+                              description='Spawnear el dock de carga delante del TB4 '
+                              '(off por defecto: bloqueaba la cámara para el Caso A)'),
 
         set_libgl_sw,
         set_ogre_rtt,

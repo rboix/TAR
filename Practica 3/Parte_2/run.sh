@@ -35,6 +35,8 @@ docker run --rm -it \
     -e ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY}" \
     -e ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID}" \
     -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+    -e OPENAI_STT_MODEL="${OPENAI_STT_MODEL}" \
+    -e STT_BACKEND="${STT_BACKEND}" \
     --cap-add=SYS_TIME \
     --device /dev/snd \
     --group-add audio \

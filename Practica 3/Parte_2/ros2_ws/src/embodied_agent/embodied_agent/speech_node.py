@@ -3,6 +3,7 @@ speech_node: Suscrito a /robot_speech.
 Sintetiza texto con ElevenLabs (fallback gTTS) y reproduce el audio.
 """
 import threading
+import time
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
@@ -20,6 +21,11 @@ class SpeechNode(Node):
         self._pub_speaking = self.create_publisher(Bool, '/robot_speaking', 10)
         self._speaking = False
         self._lock = threading.Lock()
+        # Cola extra tras terminar de reproducir para cubrir buffers del
+        # sistema de audio (Pulse/ALSA). Evita que el STT “pille” el final.
+        self._end_tail_s = float(
+            __import__('os').environ.get('ROBOT_SPEAKING_END_TAIL_S', '0.4')
+        )
         self.get_logger().info('speech_node arrancado')
 
     # Callback del subscriber. Si ya se está reproduciendo algo, descarta el nuevo mensaje.
@@ -45,6 +51,8 @@ class SpeechNode(Node):
         except Exception as e:
             self.get_logger().error(f'[speech] error TTS: {e}')
         finally:
+            if self._end_tail_s > 0:
+                time.sleep(self._end_tail_s)
             self._pub_speaking.publish(Bool(data=False))
             with self._lock:
                 self._speaking = False

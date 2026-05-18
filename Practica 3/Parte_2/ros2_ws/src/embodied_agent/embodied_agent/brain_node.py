@@ -69,7 +69,13 @@ class BrainNode(Node):
         self._sub_odom = self.create_subscription(
             Odometry, '/odom', self._on_odom, odom_qos)
         self._pub_speech = self.create_publisher(String, '/robot_speech', 10)
+        self._pub_action = self.create_publisher(String, '/action_command', 10)
         self._pub_ready = self.create_publisher(Bool, '/brain_ready', 10)
+        # Resultado del action_executor (succeeded/failed/skipped) — no
+        # bloqueamos el turno esperándolo, pero lo logueamos y guardamos
+        # para futura integración.
+        self._sub_action_result = self.create_subscription(
+            String, '/action_result', self._on_action_result, 10)
 
         self.get_logger().info(
             'brain_node arrancado (modo detective, memoria episódica activa)'
@@ -142,6 +148,7 @@ class BrainNode(Node):
             response = self._validate_response(raw)
 
             self._publish_speech(response.speech)
+            self._dispatch_action(response)
             self._save_interaction(user_text, response, elapsed)
 
             self._memory.add_turn(
@@ -278,6 +285,81 @@ class BrainNode(Node):
         msg = String()
         msg.data = speech
         self._pub_speech.publish(msg)
+
+    def _dispatch_action(self, response: GeminiResponse) -> None:
+        """Publica el comando de acción en /action_command (JSON string).
+
+        Wire format consumido por action_executor_node:
+          {
+            "action":      "none|navigate|rotate|inspect|panoramic|investigate|ask_user",
+            "target":      str | None,
+            "image_bbox":  [x0,y0,x1,y1] normalizado a [0,1] | None,
+            "distance":    float | None,   # metros, para navigate/inspect
+            "degrees":     float | None,   # grados, para rotate/panoramic
+          }
+        """
+        if response.action in ('none', 'ask_user'):
+            # No hace falta despachar: no movemos al robot. Pero igual
+            # mandamos el comando para que el executor cierre el lazo y
+            # quede traza en /action_result.
+            pass
+        params = response.action_params
+        payload = {
+            'action': response.action,
+            'target': params.target,
+            'image_bbox': params.image_bbox,
+            'distance': params.distance,
+            'degrees': params.degrees,
+        }
+        msg = String()
+        msg.data = json.dumps(payload, ensure_ascii=False)
+        self._pub_action.publish(msg)
+        self.get_logger().info(f'[brain] /action_command → {msg.data}')
+
+    def _on_action_result(self, msg: String) -> None:
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warn(
+                f'[brain] /action_result no es JSON válido: {msg.data}')
+            return
+        action = data.get('action', '')
+        status = data.get('status', '')
+        detail = data.get('message', '')
+        self.get_logger().info(
+            f'[brain] /action_result ← action={action} status={status} '
+            f'msg="{detail}"'
+        )
+        # Las acciones físicas (rotate, navigate, inspect) tardan
+        # segundos. El robot ya anunció lo que iba a hacer ANTES de
+        # arrancar; aquí cerramos el lazo verbal cuando termina, para
+        # que el usuario sepa que ya está listo o que ha fallado.
+        # `none` y `ask_user` no necesitan confirmación: no hubo
+        # movimiento, el speech original ya fue suficiente.
+        if action not in ('navigate', 'inspect', 'rotate'):
+            return
+        speech = self._action_followup_speech(action, status, detail)
+        if speech:
+            self._publish_speech(speech)
+
+    @staticmethod
+    def _action_followup_speech(action: str, status: str,
+                                detail: str) -> str | None:
+        if status == 'succeeded':
+            if action in ('navigate', 'inspect'):
+                return 'Ya estoy aquí.'
+            if action == 'rotate':
+                return 'Listo, ya he girado.'
+        if status == 'failed':
+            if action in ('navigate', 'inspect'):
+                return f'No he podido acercarme: {detail}.'
+            if action == 'rotate':
+                return f'No he podido completar el giro: {detail}.'
+        if status == 'skipped':
+            return 'No puedo hacer eso ahora, estoy ocupado con otra cosa.'
+        if status == 'not_implemented_yet':
+            return 'Esa acción todavía no la tengo implementada.'
+        return None
 
     def _save_interaction(self, user_text: str, response: GeminiResponse,
                           elapsed: float) -> None:

@@ -24,6 +24,15 @@ Implementación de lo relacionado con la voz.
 - `tts_client` se encarga de hablar (en principio se pensó por usar ElevenLabs pero la prueba gratuita no incluye muchos modelos y se optó por gTTS)
 - `audio_in_node` se encarga de transcribir lo que dice la persona usando Whisper, para posteriormente pasárselo al modelo de Gemini. Se graba en ventanas de 10 segundos y filtrando ruido
 
+Notas anti-eco (para que Whisper no transcriba lo que dice el robot):
+- `speech_node` publica `/robot_speaking` mientras reproduce el TTS.
+- `audio_in_node` ignora audio durante `/robot_speaking` y un “tail” extra, y además filtra transcripciones muy parecidas a lo último que publicó `/robot_speech`.
+- Ajustes opcionales por variables de entorno:
+  - `AUDIO_POST_SPEECH_TAIL_S` (default `4.0`)
+  - `ROBOT_SPEAKING_END_TAIL_S` (default `0.4`)
+  - `AUDIO_ROBOT_ECHO_WINDOW_S` (default `12.0`)
+  - `AUDIO_ROBOT_ECHO_MIN_SIM` (default `0.86`)
+
 ### Pruebas
 
 **Prueba 1: probar `speech_node` para ver si funciona la "voz" del robot**
@@ -87,3 +96,10 @@ Las interacciones se guardan en `/workspace/interactions.jsonl` (una línea JSON
 ros2 launch embodied_agent embodied_agent_sim_tb4_detective.launch.py
 ```
 
+Para eliminar el dock:
+
+```bash
+ign service -s /world/warehouse/remove --reqtype ignition.msgs.Entity \
+  --reptype ignition.msgs.Boolean --timeout 2000 \
+  --req 'name: "turtlebot4/standard_dock", type: MODEL'
+```
