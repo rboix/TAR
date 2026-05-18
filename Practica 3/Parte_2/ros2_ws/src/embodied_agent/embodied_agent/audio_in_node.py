@@ -219,7 +219,7 @@ class AudioInNode(Node):
         # (tensores de 0 elementos o llenos de NaN) cuando la ventana es
         # prácticamente muda y los reshape/categorical crashean.
         rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float32)))))
-        if not np.isfinite(rms) or rms < 0.001:
+        if not np.isfinite(rms) or rms < 0.0005:
             return '', False
 
         tmp_path = None

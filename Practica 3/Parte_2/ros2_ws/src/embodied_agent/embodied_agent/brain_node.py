@@ -6,6 +6,7 @@ la memoria episódica.
 """
 import io
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -16,6 +17,8 @@ from pydantic import ValidationError
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
@@ -32,6 +35,14 @@ INTERACTIONS_FILE = Path('/workspace/interactions.jsonl')
 _AUTONOMOUS_TRIGGERS = ('investiga', 'investigar', 'investigación')
 _GUIDED_TRIGGERS = ('modo guiado', 'para de investigar', 'detente')
 
+# Comandos para borrar la memoria episódica (útiles para testear la fase 4
+# y para empezar una investigación limpia entre escenas).
+_RESET_TRIGGERS = (
+    'olvida todo', 'olvídalo todo', 'olvida lo que has visto',
+    'empieza de nuevo', 'empezamos de nuevo', 'nueva investigación',
+    'borra la memoria', 'resetea la memoria', 'reinicia la investigación',
+)
+
 
 class BrainNode(Node):
     def __init__(self):
@@ -45,11 +56,32 @@ class BrainNode(Node):
             String, '/user_speech', self._on_user_speech, 10)
         self._sub_image = self.create_subscription(
             Image, '/camera/image_raw', self._on_image, 10)
+        # /odom puede venir con QoS BEST_EFFORT o RELIABLE según el driver.
+        # Usamos BEST_EFFORT para ser compatibles con la mayoría de fuentes
+        # (Gazebo diff_drive, Create 3) — el pose sólo se usa para anotar
+        # turnos, no es crítico perder algún sample.
+        odom_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        self._sub_odom = self.create_subscription(
+            Odometry, '/odom', self._on_odom, odom_qos)
         self._pub_speech = self.create_publisher(String, '/robot_speech', 10)
         self._pub_ready = self.create_publisher(Bool, '/brain_ready', 10)
 
         self.get_logger().info(
-            'brain_node arrancado (modo detective) — esperando /user_speech')
+            'brain_node arrancado (modo detective, memoria episódica activa)'
+            ' — esperando /user_speech')
+
+    def _on_odom(self, msg: Odometry):
+        p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
+        # yaw a partir del cuaternión (z, w son los relevantes en 2D).
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        theta = math.atan2(siny_cosp, cosy_cosp)
+        self._memory.set_pose((p.x, p.y, theta))
 
     def _on_image(self, msg: Image):
         try:
@@ -83,6 +115,10 @@ class BrainNode(Node):
 
     def _process(self, user_text: str):
         try:
+            if self._maybe_reset_memory(user_text):
+                # El reset ya emite voz y guarda el turno por su cuenta.
+                return
+
             self._maybe_update_mode(user_text)
 
             with self._frame_lock:
@@ -109,8 +145,9 @@ class BrainNode(Node):
                 robot_said=response.speech,
                 action=response.action,
             )
+            new_obs = 0
             if response.observations:
-                self._memory.add_observations(
+                new_obs = self._memory.add_observations(
                     [o.model_dump() for o in response.observations])
 
             self.get_logger().info(
@@ -118,7 +155,10 @@ class BrainNode(Node):
             )
             if response.observations:
                 obs_str = ', '.join(o.label for o in response.observations)
-                self.get_logger().info(f'[brain] observaciones: {obs_str}')
+                self.get_logger().info(
+                    f'[brain] observaciones: {obs_str} '
+                    f'(+{new_obs} nuevas, total={len(self._memory.observations)})'
+                )
         except ValidationError as e:
             self.get_logger().error(
                 f'[brain] JSON inválido de Gemini: {e.errors()}')
@@ -127,6 +167,31 @@ class BrainNode(Node):
         finally:
             self._processing = False
             self._signal_ready()
+
+    def _maybe_reset_memory(self, user_text: str) -> bool:
+        """Si el usuario pide olvidar/resetear, limpia memoria y responde.
+
+        Devuelve True si se ha consumido el turno (no llamamos a Gemini).
+        """
+        low = user_text.lower()
+        if not any(k in low for k in _RESET_TRIGGERS):
+            return False
+        n_obs = len(self._memory.observations)
+        n_turns = len(self._memory.conversation_history)
+        self._memory.reset_all()
+        speech = (
+            'De acuerdo, borro lo que tenía en memoria y empezamos una '
+            'nueva investigación.'
+        )
+        self.get_logger().info(
+            f'[brain] RESET memoria episódica '
+            f'(borradas {n_obs} pistas y {n_turns} turnos)')
+        self._publish_speech(speech)
+        # Guardamos el propio turno de reset para que quede traza.
+        self._memory.add_turn(
+            user=user_text, robot_said=speech, action='none',
+        )
+        return True
 
     def _maybe_update_mode(self, user_text: str) -> None:
         low = user_text.lower()
@@ -142,8 +207,12 @@ class BrainNode(Node):
     def _build_context(self, user_text: str) -> str:
         return CONTEXT_TEMPLATE.format(
             mode=self._memory.format_mode(),
+            pose=self._memory.format_pose(),
             history=self._memory.format_history(),
             observations=self._memory.format_observations(),
+            plan=self._memory.format_plan(),
+            investigation_observations=(
+                self._memory.format_investigation_observations()),
             user_text=user_text,
         )
 
@@ -160,6 +229,8 @@ class BrainNode(Node):
         entry = {
             'timestamp': time.strftime('%H:%M:%S'),
             'mode': self._memory.mode,
+            'pose': list(self._memory.get_pose()),
+            'observations_total': len(self._memory.observations),
             'user': user_text,
             'response': response.model_dump(),
             'latency_s': round(elapsed, 2),

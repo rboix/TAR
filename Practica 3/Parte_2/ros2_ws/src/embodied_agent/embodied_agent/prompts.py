@@ -55,14 +55,32 @@ Reglas estrictas:
 """
 
 # Plantilla de contexto inyectada en cada turno.
+# `pose`, `plan` e `investigation_observations` pueden contener "(ninguna)" /
+# "(sin plan activo)" cuando aún no aplican (modo guiado).
 CONTEXT_TEMPLATE = """
 Modo actual: {mode}
+Pose actual del robot: {pose}
 
-Historial reciente:
+Historial reciente de la conversación:
 {history}
 
-Observaciones acumuladas en esta investigación:
+Pistas acumuladas hasta ahora (no repitas si ya están listadas, sólo
+añade detalle nuevo cuando lo veas):
 {observations}
 
+Plan de investigación activo:
+{plan}
+
+Observaciones por paso del plan:
+{investigation_observations}
+
 El usuario dice: {user_text}
+
+Recuerda:
+- Si la pregunta del usuario es sobre algo que YA está en "Pistas acumuladas"
+  o en "Historial reciente", responde apoyándote en esa información en lugar
+  de inventar de cero.
+- Si te piden recordar qué has visto, recita las pistas acumuladas tal cual.
+- Si te piden "olvidar" o "empezar de nuevo", responde confirmándolo con
+  action="none" (el sistema externo se encarga del reset).
 """
