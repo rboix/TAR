@@ -48,6 +48,7 @@ class BrainNode(Node):
     def __init__(self):
         super().__init__('brain_node')
         self._latest_frame: bytes | None = None
+        self._latest_frame_wh: tuple[int, int] | None = None  # (width, height)
         self._frame_lock = threading.Lock()
         self._processing = False
         self._memory = AgentMemory()
@@ -98,6 +99,7 @@ class BrainNode(Node):
                 buf, format='JPEG', quality=85)
             with self._frame_lock:
                 self._latest_frame = buf.getvalue()
+                self._latest_frame_wh = (int(msg.width), int(msg.height))
         except Exception as e:
             self.get_logger().warn(f'[brain] error procesando imagen: {e}')
 
@@ -123,6 +125,7 @@ class BrainNode(Node):
 
             with self._frame_lock:
                 image_bytes = self._latest_frame
+                frame_wh = self._latest_frame_wh
             if image_bytes is None:
                 self.get_logger().warn(
                     '[brain] sin imagen disponible, llamando solo con texto')
@@ -135,6 +138,7 @@ class BrainNode(Node):
             elapsed = time.time() - t0
             self.get_logger().info(f'[brain] Gemini respondió en {elapsed:.1f}s')
 
+            self._maybe_fix_bbox(raw, frame_wh)
             response = self._validate_response(raw)
 
             self._publish_speech(response.speech)
@@ -215,6 +219,57 @@ class BrainNode(Node):
                 self._memory.format_investigation_observations()),
             user_text=user_text,
         )
+
+    def _maybe_fix_bbox(self, raw: dict,
+                        frame_wh: tuple[int, int] | None) -> None:
+        """Normaliza image_bbox si Gemini lo devuelve fuera de [0,1].
+
+        Gemini 2.5 Flash mezcla a veces escalas: puede devolver píxeles
+        ([0, 0, 640, 480]), la escala 0–1000 que usan otros modelos suyos,
+        o incluso un híbrido (X normalizado, Y en píxeles). En lugar de
+        rechazar el turno, lo intentamos reparar antes de validar.
+        """
+        if not isinstance(raw, dict):
+            return
+        params = raw.get('action_params')
+        if not isinstance(params, dict):
+            return
+        bbox = params.get('image_bbox')
+        if bbox is None or not isinstance(bbox, list) or len(bbox) != 4:
+            return
+        try:
+            vals = [float(v) for v in bbox]
+        except (TypeError, ValueError):
+            return
+        if all(0.0 <= v <= 1.0 for v in vals):
+            return  # ya está normalizado
+
+        if frame_wh is not None:
+            w, h = frame_wh
+            # Caso píxeles: dividir X/W y Y/H independientemente. Esto
+            # también arregla el caso híbrido (X normalizada, Y en píxeles)
+            # porque dividir 0.6 / 640 daría ~0.001, así que sólo
+            # dividimos los componentes que exceden de 1.
+            fixed = []
+            for i, v in enumerate(vals):
+                if 0.0 <= v <= 1.0:
+                    fixed.append(v)
+                else:
+                    denom = w if i % 2 == 0 else h
+                    fixed.append(v / denom if denom > 0 else v)
+        else:
+            # Sin dimensiones (frame None) probamos la escala 0–1000 de Gemini.
+            fixed = [v / 1000.0 for v in vals]
+
+        # Recortar a [0,1] por si quedó algo justo fuera por redondeo.
+        fixed = [max(0.0, min(1.0, v)) for v in fixed]
+        # Asegurar orden x0<x1, y0<y1; si no, lo dejamos como estaba y
+        # que pydantic lo rechace (es un bbox genuinamente malformado).
+        if fixed[2] > fixed[0] and fixed[3] > fixed[1]:
+            self.get_logger().warn(
+                f'[brain] image_bbox fuera de [0,1]: {bbox} → normalizado '
+                f'a {[round(v, 3) for v in fixed]}')
+            params['image_bbox'] = fixed
 
     def _validate_response(self, raw: dict) -> GeminiResponse:
         return GeminiResponse.model_validate(raw)
