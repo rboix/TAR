@@ -67,4 +67,9 @@ RUN sudo sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable
 RUN wget http://packages.osrfoundation.org/gazebo.key -O - | sudo apt-key add -
 RUN sudo apt-get update && sudo apt-get install ignition-fortress -y
 
+RUN sudo apt-get install -y \
+    xvfb x11vnc openbox dbus-x11
+
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+
 USER $USERNAME
