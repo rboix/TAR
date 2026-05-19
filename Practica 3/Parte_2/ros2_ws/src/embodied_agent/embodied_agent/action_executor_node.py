@@ -46,7 +46,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 
 from embodied_agent.utils.geometry import pixel_to_3d, yaw_from_quaternion
 
@@ -54,8 +54,8 @@ from embodied_agent.utils.geometry import pixel_to_3d, yaw_from_quaternion
 # ============================================== Constantes de control
 
 # Velocidades nominales y rate de publicación de cmd_vel.
-_ROTATE_ANGULAR_SPEED = 0.6   # rad/s
-_LINEAR_SPEED = 0.25          # m/s
+_ROTATE_ANGULAR_SPEED = 0.3   # rad/s  (reducido para robot real)
+_LINEAR_SPEED = 0.15          # m/s    (reducido para robot real)
 _CMD_VEL_RATE_HZ = 20.0
 
 # Tolerancias de cierre de lazo.
@@ -136,6 +136,10 @@ class ActionExecutorNode(Node):
         # Flag: la última llamada a _drive_forward se abortó por LIDAR.
         self._drive_stopped_by_obstacle: bool = False
 
+        # Parada de emergencia: se activa con /estop, se limpia al recibir
+        # el siguiente comando de acción.
+        self._estop = threading.Event()
+
         # Lock de exclusión mutua para acciones físicas (no queremos dos
         # rotates concurrentes).
         self._busy = threading.Lock()
@@ -161,6 +165,8 @@ class ActionExecutorNode(Node):
             LaserScan, '/scan', self._on_scan, sensor_qos)
         self._sub_cmd = self.create_subscription(
             String, '/action_command', self._on_command, 10)
+        self._sub_estop = self.create_subscription(
+            Empty, '/estop', self._on_estop, 10)
 
         self.get_logger().info(
             'action_executor_node arrancado (fase 6 — panoramic + inspect, '
@@ -206,6 +212,11 @@ class ActionExecutorNode(Node):
         with self._scan_lock:
             self._latest_scan = msg
 
+    def _on_estop(self, _msg: Empty):
+        self._estop.set()
+        self._pub_cmd_vel.publish(Twist())
+        self.get_logger().warn('[exec] ¡ESTOP activado! Robot detenido.')
+
     def _obstacle_ahead(self, threshold_m: float = _LIDAR_STOP_DIST_M) -> float | None:
         """Devuelve la dist. al obstáculo más cercano en el arco frontal ±30°, o None si libre."""
         with self._scan_lock:
@@ -236,6 +247,7 @@ class ActionExecutorNode(Node):
             self.get_logger().warn(
                 f'[exec] /action_command no es JSON válido: {e}')
             return
+        self._estop.clear()
         action = cmd.get('action', 'none')
         self.get_logger().info(f'[exec] comando: {cmd}')
 
@@ -497,6 +509,9 @@ class ActionExecutorNode(Node):
         period_s = 1.0 / _CMD_VEL_RATE_HZ
         twist = Twist()
         while rclpy.ok() and clock.now() < end_time:
+            if self._estop.is_set():
+                self._pub_cmd_vel.publish(Twist())
+                return False
             with self._odom_lock:
                 if self._latest_pose is None:
                     return False
@@ -539,6 +554,9 @@ class ActionExecutorNode(Node):
 
         twist = Twist()
         while rclpy.ok() and clock.now() < end_time:
+            if self._estop.is_set():
+                self._pub_cmd_vel.publish(Twist())
+                return False
             # ── Safety stop por LIDAR ──────────────────────────────────────
             obs_dist = self._obstacle_ahead()
             if obs_dist is not None:

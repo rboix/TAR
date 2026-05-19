@@ -50,7 +50,10 @@ _WHISPER_HALLUCINATIONS = (
     'gracias por ver',
     'gracias por su atención',
     'suscríbete',
+    'suscribe',
     'subscribe',
+    'saludo',
+    'adiós',
     'thanks for watching',
     'thank you for watching',
     # Alucinaciones frecuentes de whisper-1/gpt-4o sobre ruido de fondo

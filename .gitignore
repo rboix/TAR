@@ -55,6 +55,7 @@ CATKIN_IGNORE
 
 .vscode/
 CLAUDE.md
+conexion.md
 credenciales.json
 
 # Embodied agent - claves API y builds

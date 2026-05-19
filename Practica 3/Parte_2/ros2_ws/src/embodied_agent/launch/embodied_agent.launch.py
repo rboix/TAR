@@ -50,12 +50,17 @@ def generate_launch_description():
             name='action_executor_node',
             output='screen',
             parameters=[{'robot_ns': ns}],
-            # Remaps: publicaciones de control al namespace del robot
             remappings=[
-                ('/cmd_vel',           ['/', ns, '/cmd_vel']),
-                ('/navigate_to_pose',  ['/', ns, '/navigate_to_pose']),
-                ('/dock',              ['/', ns, '/dock']),
-                ('/undock',            ['/', ns, '/undock']),
+                # Sensores del robot
+                ('/camera/depth',       ['/', ns, '/oakd/stereo/image_raw']),
+                ('/camera/camera_info', ['/', ns, '/oakd/rgb/preview/camera_info']),
+                ('/odom',               ['/', ns, '/odom']),
+                ('/scan',               ['/', ns, '/scan']),
+                # Control
+                ('/cmd_vel',            ['/', ns, '/cmd_vel']),
+                ('/navigate_to_pose',   ['/', ns, '/navigate_to_pose']),
+                ('/dock',               ['/', ns, '/dock']),
+                ('/undock',             ['/', ns, '/undock']),
             ],
         ),
     ])

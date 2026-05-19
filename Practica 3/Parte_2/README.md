@@ -103,3 +103,8 @@ ign service -s /world/warehouse/remove --reqtype ignition.msgs.Entity \
   --reptype ignition.msgs.Boolean --timeout 2000 \
   --req 'name: "turtlebot4/standard_dock", type: MODEL'
 ```
+
+ros2 launch embodied_agent embodied_agent.launch.py
+
+ros2 topic pub /estop std_msgs/msg/Empty "{}" --once
+

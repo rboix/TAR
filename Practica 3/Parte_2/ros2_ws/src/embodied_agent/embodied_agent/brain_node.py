@@ -69,10 +69,15 @@ class BrainNode(Node):
         self._investigation_plan: list[dict] = []
         self._investigation_step: int = 0
 
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
         self._sub_speech = self.create_subscription(
             String, '/user_speech', self._on_user_speech, 10)
         self._sub_image = self.create_subscription(
-            Image, '/camera/image_raw', self._on_image, 10)
+            Image, '/camera/image_raw', self._on_image, sensor_qos)
         # /odom puede venir con QoS BEST_EFFORT o RELIABLE según el driver.
         # Usamos BEST_EFFORT para ser compatibles con la mayoría de fuentes
         # (Gazebo diff_drive, Create 3) — el pose sólo se usa para anotar
