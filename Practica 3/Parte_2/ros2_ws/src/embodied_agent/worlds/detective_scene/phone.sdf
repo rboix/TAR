@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!-- Smartphone caído en el suelo.
+     Por defecto spawneado con R=π (boca abajo, pantalla mirando al suelo)
+     para simular que se cayó boca abajo al salir corriendo.
+     Dimensiones: 155 x 75 x 9 mm. Centro a z≈0.005. -->
+<sdf version="1.8">
+  <model name="phone">
+    <static>true</static>
+    <link name="link">
+      <collision name="c">
+        <geometry><box><size>0.155 0.075 0.009</size></box></geometry>
+      </collision>
+
+      <!-- Cuerpo principal (negro mate) -->
+      <visual name="body">
+        <geometry><box><size>0.155 0.075 0.009</size></box></geometry>
+        <material>
+          <ambient>0.07 0.07 0.08 1</ambient>
+          <diffuse>0.11 0.11 0.12 1</diffuse>
+          <specular>0.55 0.55 0.60 1</specular>
+        </material>
+      </visual>
+
+      <!-- Marco lateral (gris aluminio) -->
+      <visual name="frame">
+        <geometry><box><size>0.157 0.077 0.007</size></box></geometry>
+        <material>
+          <ambient>0.28 0.28 0.29 1</ambient>
+          <diffuse>0.42 0.42 0.44 1</diffuse>
+          <specular>0.85 0.85 0.88 1</specular>
+        </material>
+      </visual>
+
+      <!-- Pantalla (en la cara +Z del cuerpo; queda abajo cuando R=π) -->
+      <visual name="screen">
+        <pose>0 0 0.0046 0 0 0</pose>
+        <geometry><box><size>0.142 0.066 0.001</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.04 1</ambient>
+          <diffuse>0.04 0.04 0.06 1</diffuse>
+          <specular>0.95 0.95 1.00 1</specular>
+        </material>
+      </visual>
+
+      <!-- Módulo de cámara trasera (cara -Z; queda arriba cuando R=π) -->
+      <visual name="camera_module">
+        <pose>0.052 0.020 -0.005 0 0 0</pose>
+        <geometry><box><size>0.030 0.022 0.003</size></box></geometry>
+        <material>
+          <ambient>0.04 0.04 0.05 1</ambient>
+          <diffuse>0.07 0.07 0.08 1</diffuse>
+          <specular>0.80 0.80 0.85 1</specular>
+        </material>
+      </visual>
+      <!-- Lente 1 -->
+      <visual name="lens1">
+        <pose>0.056 0.024 -0.007 0 0 0</pose>
+        <geometry><cylinder><radius>0.005</radius><length>0.001</length></cylinder></geometry>
+        <material>
+          <ambient>0.02 0.02 0.08 1</ambient>
+          <diffuse>0.04 0.04 0.14 1</diffuse>
+          <specular>1.0 1.0 1.0 1</specular>
+        </material>
+      </visual>
+      <!-- Lente 2 -->
+      <visual name="lens2">
+        <pose>0.048 0.018 -0.007 0 0 0</pose>
+        <geometry><cylinder><radius>0.004</radius><length>0.001</length></cylinder></geometry>
+        <material>
+          <ambient>0.02 0.02 0.08 1</ambient>
+          <diffuse>0.04 0.04 0.14 1</diffuse>
+          <specular>1.0 1.0 1.0 1</specular>
+        </material>
+      </visual>
+
+      <!-- Botón lateral de encendido -->
+      <visual name="power_button">
+        <pose>0.079 -0.022 0 0 0 0</pose>
+        <geometry><box><size>0.002 0.012 0.004</size></box></geometry>
+        <material>
+          <ambient>0.22 0.22 0.23 1</ambient>
+          <diffuse>0.35 0.35 0.36 1</diffuse>
+          <specular>0.80 0.80 0.80 1</specular>
+        </material>
+      </visual>
+
+      <!-- Botón de volumen (doble) -->
+      <visual name="vol_button">
+        <pose>-0.079 0.015 0 0 0 0</pose>
+        <geometry><box><size>0.002 0.022 0.004</size></box></geometry>
+        <material>
+          <ambient>0.22 0.22 0.23 1</ambient>
+          <diffuse>0.35 0.35 0.36 1</diffuse>
+          <specular>0.80 0.80 0.80 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

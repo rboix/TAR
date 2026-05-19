@@ -38,13 +38,6 @@ STT_BACKEND = (os.environ.get('STT_BACKEND') or 'openai').lower()
 OPENAI_STT_MODEL = os.environ.get('OPENAI_STT_MODEL') or 'whisper-1'
 WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE') or 'small'
 
-# Prompt orientativo (mejora transcripción de jerga del proyecto).
-STT_PROMPT = (
-    'Robot detective en un laboratorio. Investiga la escena. '
-    'Acércate, inspecciona, panorámica, gira, vuelve. '
-    'Mochila, botella, papeles, silla, llaves, pistas, derrame, huida.'
-)
-
 
 # ================================================================ estado
 
@@ -145,7 +138,6 @@ def _transcribe_openai(audio: np.ndarray,
         model=OPENAI_STT_MODEL,
         file=('chunk.wav', wav_bytes, 'audio/wav'),
         language='es',
-        prompt=STT_PROMPT,
     )
     return (response.text or '').strip(), 0.0
 
@@ -158,8 +150,7 @@ def _transcribe_local(audio: np.ndarray,
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
             tmp_path = f.name
             f.write(_audio_to_wav_bytes(audio, sample_rate))
-        result = _local_model.transcribe(
-            tmp_path, language='es', initial_prompt=STT_PROMPT)
+        result = _local_model.transcribe(tmp_path, language='es')
         segs = result.get('segments', [])
         no_speech = float(segs[0].get('no_speech_prob', 1.0)) if segs else 1.0
         return (result.get('text', '') or '').strip(), no_speech

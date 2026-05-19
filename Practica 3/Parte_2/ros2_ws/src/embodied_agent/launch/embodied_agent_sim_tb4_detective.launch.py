@@ -11,6 +11,8 @@ Escena por defecto (Caso A — sección 3 del CLAUDE.md):
   - 3 papeles dispersos (uno cerca del charco "mojado")
   - Mochila abierta apartada
   - Zapatilla suelta lejos de su pareja
+  - Llavero caído (salió del bolsillo de la mochila al tirar de ella)
+  - Móvil boca abajo (caído al levantarse corriendo)
 
 Uso:
   ros2 launch embodied_agent embodied_agent_sim_tb4_detective.launch.py
@@ -46,6 +48,14 @@ DETECTIVE_SCENE_CASE_A = [
 
     # Zapatilla descolgada (la pareja se "perdió" en la huida).
     ('shoe.sdf',           'evidence_shoe',     1.30, -0.85, 0.05, 0.0, 0.0,  0.80),
+
+    # Llavero caído en el suelo entre el charco y la mochila.
+    # Narrativa: salió del bolsillo de la mochila cuando alguien la agarró con prisa.
+    ('keys.sdf',           'evidence_keys',     2.25, -0.42, 0.003, 0.0, 0.0,  0.55),
+
+    # Móvil caído boca abajo (R=π) cerca de los papeles.
+    # Narrativa: se le cayó de la mano al levantarse corriendo de la silla.
+    ('phone.sdf',          'evidence_phone',    1.82,  0.20, 0.005, 3.1416, 0.0, -0.35),
 ]
 
 

@@ -25,15 +25,22 @@ WINDOW_SECS = 5    # segundos por ventana de grabación
 
 # Umbral de RMS por debajo del cual no llamamos al backend STT. En
 # float32 [-1,1] el ruido de fondo de un mic típico está en 0.001–0.003;
-# el habla suele estar por encima de 0.02. 0.002 deja pasar voz tranquila
-# pero filtra mucho ruido residual que confundía a Whisper.
-_RMS_GATE = 0.002
+# el habla suele estar por encima de 0.02. Con OpenAI (sin no_speech_prob)
+# el gate es la primera línea de defensa, así que se sube un poco.
+# Configurable via AUDIO_RMS_GATE=... en .env.
+_RMS_GATE = float(os.environ.get('AUDIO_RMS_GATE', '0.018'))
 
-# Alucinaciones famosas de Whisper sobre silencio o ruido. Vienen de
-# subtítulos de YouTube en su dataset. Si el texto transcrito contiene
-# una de estas, era casi seguro silencio: lo descartamos antes de
-# publicar a /user_speech. La comparación es case-insensitive.
+# Número mínimo de palabras y chars (sin puntuación) para publicar.
+# Con OpenAI whisper-1 no hay no_speech_prob, así que estos filtros son
+# la segunda línea contra alucinaciones de 1-2 palabras sobre ruido.
+_MIN_WORDS = int(os.environ.get('AUDIO_MIN_WORDS', '2'))
+_MIN_CHARS = int(os.environ.get('AUDIO_MIN_CHARS', '6'))
+
+# Alucinaciones de Whisper/gpt-4o sobre silencio o ruido ambiental.
+# Vienen del dataset de YouTube (subtítulos) o son frases cortas que
+# el modelo "completa" sobre ruido de fondo.
 _WHISPER_HALLUCINATIONS = (
+    # Dataset YouTube (Whisper local y API)
     'amara.org',
     'subtítulos realizados por',
     'subtitulado por',
@@ -46,6 +53,21 @@ _WHISPER_HALLUCINATIONS = (
     'subscribe',
     'thanks for watching',
     'thank you for watching',
+    # Alucinaciones frecuentes de whisper-1/gpt-4o sobre ruido de fondo
+    'la veracidad',
+    'veracidad',
+    'la gente',
+    'las personas',
+    'la vida',
+    'por favor',
+    'muchas gracias',
+    'buenas tardes',
+    'buenas noches',
+    'buenos días',
+    'hasta luego',
+    'de asistir',
+    'que son',
+    'la caña',
 )
 
 
@@ -325,19 +347,24 @@ class AudioInNode(Node):
             self.get_logger().error(f'Error transcripción: {e}')
             return '', False
 
-        # Filtro de alucinaciones: si el texto que devuelve Whisper coincide
-        # con uno de los "fillers" típicos del dataset de YouTube, lo
-        # tratamos como silencio. Esto es necesario porque la API todavía
-        # alucina sobre audio que cruza el RMS gate pero no es habla real.
         if _looks_like_hallucination(text):
             self.get_logger().debug(
-                f'[audio_in] alucinación de Whisper filtrada: "{text}"')
+                f'[audio_in] alucinación filtrada: "{text}"')
             return '', False
 
-        # Decisión de "hay habla":
-        #   - local (Whisper): no_speech < 0.6 es la heurística estándar.
-        #   - API: no_speech siempre es 0.0; nos basamos en el texto y el
-        #     filtro de RMS + alucinaciones que ya hicimos.
+        # Filtro de longitud: descarta fragmentos muy cortos que son
+        # alucinaciones habituales de whisper-1 sobre ruido ambiental.
+        import re as _re
+        clean = _re.sub(r'[^\w\s]', '', text, flags=_re.UNICODE).strip()
+        words = clean.split()
+        if len(words) < _MIN_WORDS or len(clean) < _MIN_CHARS:
+            self.get_logger().debug(
+                f'[audio_in] descartado por longitud ({len(words)} palabras, '
+                f'{len(clean)} chars): "{text}"')
+            return '', False
+
+        # Con OpenAI whisper-1 no_speech es siempre 0.0 — confiamos en
+        # el RMS gate + filtros anteriores para decidir si hay habla real.
         if stt_client.active_backend() == 'local':
             has_speech = bool(text) and no_speech < 0.6
         else:

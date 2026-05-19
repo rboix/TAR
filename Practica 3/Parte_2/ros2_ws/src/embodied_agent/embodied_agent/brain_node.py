@@ -24,7 +24,10 @@ from std_msgs.msg import Bool, String
 
 from embodied_agent.gemini_client import call_gemini
 from embodied_agent.memory import AgentMemory
-from embodied_agent.prompts import SYSTEM_PROMPT, CONTEXT_TEMPLATE
+from embodied_agent.prompts import (
+    SYSTEM_PROMPT, CONTEXT_TEMPLATE,
+    PANORAMIC_USER_TEXT, INSPECT_USER_TEXT,
+)
 from embodied_agent.schemas import GeminiResponse
 
 
@@ -52,6 +55,12 @@ class BrainNode(Node):
         self._frame_lock = threading.Lock()
         self._processing = False
         self._memory = AgentMemory()
+
+        # Frames acumulados durante una acción panorámica.
+        self._panoramic_frames: list[bytes] = []
+        self._panoramic_lock = threading.Lock()
+        # Grados totales de la panorámica en curso (para el prompt).
+        self._panoramic_degrees: float = 360.0
 
         self._sub_speech = self.create_subscription(
             String, '/user_speech', self._on_user_speech, 10)
@@ -298,6 +307,16 @@ class BrainNode(Node):
             "degrees":     float | None,   # grados, para rotate/panoramic
           }
         """
+        # Para panoramic: reiniciar la lista de frames acumulados y guardar grados.
+        if response.action == 'panoramic':
+            with self._panoramic_lock:
+                self._panoramic_frames.clear()
+            self._panoramic_degrees = float(
+                response.action_params.degrees or 360.0)
+            self.get_logger().info(
+                f'[brain] panoramic iniciada: '
+                f'{self._panoramic_degrees:.0f}°, frames reiniciados'
+            )
         if response.action in ('none', 'ask_user'):
             # No hace falta despachar: no movemos al robot. Pero igual
             # mandamos el comando para que el executor cierre el lazo y
@@ -330,13 +349,59 @@ class BrainNode(Node):
             f'[brain] /action_result ← action={action} status={status} '
             f'msg="{detail}"'
         )
-        # Las acciones físicas (rotate, navigate, inspect) tardan
-        # segundos. El robot ya anunció lo que iba a hacer ANTES de
-        # arrancar; aquí cerramos el lazo verbal cuando termina, para
-        # que el usuario sepa que ya está listo o que ha fallado.
-        # `none` y `ask_user` no necesitan confirmación: no hubo
-        # movimiento, el speech original ya fue suficiente.
-        if action not in ('navigate', 'inspect', 'rotate'):
+
+        # Captura de frame intermedio durante panorámica.
+        if action == 'panoramic_step' and status == 'capture':
+            with self._frame_lock:
+                frame = self._latest_frame
+            if frame is not None:
+                with self._panoramic_lock:
+                    self._panoramic_frames.append(frame)
+                step = data.get('step', '?')
+                total = data.get('total', '?')
+                self.get_logger().info(
+                    f'[brain] panoramic frame {step}/{total} capturado '
+                    f'({len(frame)} bytes)'
+                )
+            else:
+                self.get_logger().warn('[brain] panoramic_step: sin frame disponible')
+            return
+
+        # Panorámica completa → llamar a Gemini con todos los frames.
+        if action == 'panoramic':
+            if status == 'succeeded':
+                with self._panoramic_lock:
+                    frames = list(self._panoramic_frames)
+                    self._panoramic_frames.clear()
+                threading.Thread(
+                    target=self._panoramic_followup,
+                    args=(frames, self._panoramic_degrees),
+                    daemon=True,
+                ).start()
+            else:
+                self._publish_speech(
+                    f'La panorámica no se ha completado bien: {detail}.')
+            return
+
+        # Inspect completado → llamar a Gemini con el frame cercano.
+        if action == 'inspect':
+            if status == 'succeeded':
+                with self._frame_lock:
+                    frame = self._latest_frame
+                target = data.get('target', '')
+                threading.Thread(
+                    target=self._inspect_followup,
+                    args=(frame, target),
+                    daemon=True,
+                ).start()
+            else:
+                speech = self._action_followup_speech(action, status, detail)
+                if speech:
+                    self._publish_speech(speech)
+            return
+
+        # Acciones básicas (navigate, rotate): confirmar por voz.
+        if action not in ('navigate', 'rotate'):
             return
         speech = self._action_followup_speech(action, status, detail)
         if speech:
@@ -346,7 +411,7 @@ class BrainNode(Node):
     def _action_followup_speech(action: str, status: str,
                                 detail: str) -> str | None:
         if status == 'succeeded':
-            if action in ('navigate', 'inspect'):
+            if action == 'navigate':
                 return 'Ya estoy aquí.'
             if action == 'rotate':
                 return 'Listo, ya he girado.'
@@ -360,6 +425,106 @@ class BrainNode(Node):
         if status == 'not_implemented_yet':
             return 'Esa acción todavía no la tengo implementada.'
         return None
+
+    def _panoramic_followup(self, frames: list[bytes], degrees: float) -> None:
+        """Llama a Gemini con todos los frames de la panorámica para análisis."""
+        if not frames:
+            self._publish_speech(
+                'He completado la rotación, pero no he podido capturar imágenes.')
+            return
+        if self._processing:
+            self.get_logger().warn(
+                '[brain] panoramic followup: brain ocupado, abortando')
+            self._publish_speech(
+                'He completado la panorámica, pero estaba ocupado analizando '
+                'otra cosa. Puedes pedirme que describa lo que veo.')
+            return
+        self._processing = True
+        try:
+            self.get_logger().info(
+                f'[brain] panoramic followup: Gemini ← {len(frames)} frames')
+            context = PANORAMIC_USER_TEXT.format(
+                degrees=degrees,
+                n_frames=len(frames),
+                mode=self._memory.format_mode(),
+                pose=self._memory.format_pose(),
+                observations=self._memory.format_observations(),
+            )
+            raw = call_gemini(SYSTEM_PROMPT, context, images=frames)
+            self._maybe_fix_bbox(raw, self._latest_frame_wh)
+            response = self._validate_response(raw)
+            self._publish_speech(response.speech)
+            if response.observations:
+                self._memory.add_observations(
+                    [o.model_dump() for o in response.observations])
+            self._memory.add_turn(
+                user='[panorámica automática]',
+                robot_said=response.speech,
+                action='panoramic',
+            )
+            self._save_interaction(
+                '[panorámica automática]', response, elapsed=0.0)
+        except ValidationError as e:
+            self.get_logger().error(
+                f'[brain] panoramic followup JSON inválido: {e.errors()}')
+            self._publish_speech(
+                'He completado la panorámica, pero tuve un problema al '
+                'analizar las imágenes.')
+        except Exception as e:
+            self.get_logger().error(f'[brain] panoramic followup error: {e}')
+            self._publish_speech(
+                'He completado la panorámica. Puedes pedirme que describa '
+                'lo que veo.')
+        finally:
+            self._processing = False
+            self._signal_ready()
+
+    def _inspect_followup(self, frame: bytes | None, target: str) -> None:
+        """Llama a Gemini con el frame cercano para análisis detallado."""
+        if self._processing:
+            self.get_logger().warn(
+                '[brain] inspect followup: brain ocupado, fallback speech')
+            self._publish_speech('Ya estoy aquí.')
+            return
+        if frame is None:
+            self._publish_speech(
+                'He llegado, pero no tengo imagen para analizar.')
+            return
+        self._processing = True
+        try:
+            self.get_logger().info(
+                f'[brain] inspect followup: Gemini ← frame cercano '
+                f'de "{target}"')
+            context = INSPECT_USER_TEXT.format(
+                target=target or 'el objetivo',
+                mode=self._memory.format_mode(),
+                pose=self._memory.format_pose(),
+                observations=self._memory.format_observations(),
+            )
+            raw = call_gemini(SYSTEM_PROMPT, context, image_bytes=frame)
+            self._maybe_fix_bbox(raw, self._latest_frame_wh)
+            response = self._validate_response(raw)
+            self._publish_speech(response.speech)
+            if response.observations:
+                self._memory.add_observations(
+                    [o.model_dump() for o in response.observations])
+            self._memory.add_turn(
+                user=f'[inspección automática de "{target}"]',
+                robot_said=response.speech,
+                action='inspect',
+            )
+            self._save_interaction(
+                f'[inspección de "{target}"]', response, elapsed=0.0)
+        except ValidationError as e:
+            self.get_logger().error(
+                f'[brain] inspect followup JSON inválido: {e.errors()}')
+            self._publish_speech('Ya estoy aquí.')
+        except Exception as e:
+            self.get_logger().error(f'[brain] inspect followup error: {e}')
+            self._publish_speech('Ya estoy aquí.')
+        finally:
+            self._processing = False
+            self._signal_ready()
 
     def _save_interaction(self, user_text: str, response: GeminiResponse,
                           elapsed: float) -> None:

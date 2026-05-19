@@ -44,11 +44,27 @@ def get_client() -> genai.Client:
     return _client
 
 
-def call_gemini(system_prompt: str, user_text: str, image_bytes: bytes | None = None) -> dict:
+def call_gemini(
+    system_prompt: str,
+    user_text: str,
+    image_bytes: bytes | None = None,
+    images: list[bytes] | None = None,
+) -> dict:
+    """Llama a Gemini con texto y opcionalmente imagen(es).
+
+    - `image_bytes`: imagen única (turno normal).
+    - `images`: lista de imágenes (modo panorámico). Se envían todas antes
+      del texto para que el modelo las analice en orden.
+    Los dos parámetros son mutuamente excluyentes; `images` tiene preferencia.
+    """
     client = get_client()
-    parts: list = [types.Part.from_text(text=user_text)]
-    if image_bytes:
-        parts.insert(0, types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'))
+    parts: list = []
+    if images:
+        for img in images:
+            parts.append(types.Part.from_bytes(data=img, mime_type='image/jpeg'))
+    elif image_bytes:
+        parts.append(types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'))
+    parts.append(types.Part.from_text(text=user_text))
 
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,

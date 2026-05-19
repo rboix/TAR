@@ -1,5 +1,5 @@
 """
-action_executor_node (Fase 5 — variante open-loop).
+action_executor_node (Fase 6 — panoramic + inspect).
 
 Decisión arquitectónica
 =======================
@@ -16,18 +16,19 @@ navegación open-loop sobre `/cmd_vel` + `/odom` directamente:
     rotate cerrando lazo con /odom (yaw)
     drive forward cerrando lazo con /odom (posición)
 
-Todo lo que necesitamos lo tenemos publicando: `/turtlebot4/cmd_vel`,
-`/turtlebot4/odom`, `/oakd/rgb/preview/depth` y `camera_info`.
-
 Para portar al robot real bastaría con sustituir `_do_navigate` por la
 variante Nav2 (el preprocesado del bbox sería idéntico).
 
 Acciones soportadas
 ===================
-  - none, ask_user        → no-op (sólo cierra lazo en /action_result)
-  - rotate                → closed-loop sobre yaw de /odom
-  - navigate / inspect    → orienta al objetivo + avanza a (dist-stop)
-  - panoramic, investigate → stub (Fase 6/7)
+  - none, ask_user    → no-op (sólo cierra lazo en /action_result)
+  - rotate            → closed-loop sobre yaw de /odom
+  - navigate          → orienta al objetivo + avanza a (dist-stop, default 0.5 m)
+  - inspect           → igual que navigate con stop más corto (default 0.3 m) +
+                        emite evento panoramic_step/capture al llegar
+  - panoramic         → giro 360° en N pasos; emite panoramic_step/capture en
+                        cada parada para que brain_node acumule frames
+  - investigate       → stub (Fase 7)
 """
 import json
 import math
@@ -81,6 +82,18 @@ _STOP_DISTANCE_MARGIN_M = 0.10
 # del bbox sale mal (p.ej. cogió la pared del fondo a 8 m), no
 # queremos que el robot salga disparado al otro lado del laboratorio.
 _MAX_DRIVE_DIST_M = 3.0
+
+# Distancia de parada por defecto para inspect (más corta que navigate).
+_INSPECT_DEFAULT_STOP_M = 0.3
+
+# Panoramic: número de paradas por defecto en un giro de 360°.
+_PANORAMIC_DEFAULT_STEPS = 8
+# Tiempo de espera tras converger la rotación, antes de señalizar "captura",
+# para que la cámara se estabilice y el frame publicado sea del ángulo correcto.
+_PANORAMIC_STABILIZE_S = 0.5
+# Tiempo de espera tras publicar el evento capture, para dar tiempo al
+# brain_node a capturar el frame antes de arrancar la siguiente rotación.
+_PANORAMIC_CAPTURE_WAIT_S = 0.3
 
 # Fallback de intrínsecos si /camera/camera_info no llega a tiempo.
 _FALLBACK_INTRINSICS = {
@@ -138,8 +151,8 @@ class ActionExecutorNode(Node):
             String, '/action_command', self._on_command, 10)
 
         self.get_logger().info(
-            'action_executor_node arrancado (fase 5 — open-loop, '
-            'sin Nav2 ni tf2)'
+            'action_executor_node arrancado (fase 6 — panoramic + inspect, '
+            'open-loop sin Nav2)'
         )
 
     # ============================================================ sensores
@@ -194,10 +207,10 @@ class ActionExecutorNode(Node):
             self._publish_result(action, 'succeeded',
                                  'no se requiere acción física')
             return
-        if action in ('panoramic', 'investigate'):
+        if action == 'investigate':
             self._publish_result(
                 action, 'not_implemented_yet',
-                f'la acción "{action}" se implementa en una fase posterior')
+                'la acción "investigate" se implementa en Fase 7')
             return
 
         if not self._busy.acquire(blocking=False):
@@ -212,8 +225,12 @@ class ActionExecutorNode(Node):
         try:
             if action == 'rotate':
                 self._do_rotate(cmd)
-            elif action in ('navigate', 'inspect'):
+            elif action == 'navigate':
                 self._do_navigate(cmd)
+            elif action == 'inspect':
+                self._do_inspect(cmd)
+            elif action == 'panoramic':
+                self._do_panoramic(cmd)
             else:
                 self._publish_result(action, 'failed',
                                      f'acción desconocida: {action}')
@@ -354,7 +371,74 @@ class ActionExecutorNode(Node):
 
         self._publish_result(
             action_name, 'succeeded',
-            f'aproximación a "{target_label}" completada')
+            f'aproximación a "{target_label}" completada',
+            target=target_label,
+        )
+
+    # =============================================================== inspect
+
+    def _do_inspect(self, cmd: dict):
+        """Igual que navigate pero con stop_distance más corto por defecto."""
+        cmd_inspect = dict(cmd)
+        if not cmd_inspect.get('distance'):
+            cmd_inspect['distance'] = _INSPECT_DEFAULT_STOP_M
+        self._do_navigate(cmd_inspect)
+
+    # ============================================================ panoramic
+
+    def _do_panoramic(self, cmd: dict):
+        """Giro de `degrees`° en N pasos capturando un frame en cada parada.
+
+        En cada parada emite {"action":"panoramic_step","status":"capture"} para
+        que brain_node acceda a self._latest_frame y acumule los frames.
+        Al finalizar emite {"action":"panoramic","status":"succeeded","steps":N}.
+        """
+        degrees = float(cmd.get('degrees') or 360.0)
+        n_steps = int(cmd.get('steps') or _PANORAMIC_DEFAULT_STEPS)
+        step_deg = degrees / n_steps
+
+        with self._odom_lock:
+            if self._latest_pose is None:
+                self._publish_result('panoramic', 'failed', 'sin /odom')
+                return
+            start_yaw = self._latest_pose[2]
+
+        self.get_logger().info(
+            f'[exec] panoramic {degrees:.0f}° en {n_steps} pasos '
+            f'(~{step_deg:.1f}°/paso), start_yaw={math.degrees(start_yaw):.1f}°'
+        )
+
+        completed = 0
+        for i in range(n_steps):
+            target_yaw = start_yaw + math.radians((i + 1) * step_deg)
+            self.get_logger().info(
+                f'[exec] panoramic paso {i + 1}/{n_steps}: '
+                f'→ {math.degrees(target_yaw):.1f}°'
+            )
+            if not self._rotate_to_yaw(target_yaw, _ROTATE_TIMEOUT_S):
+                self.get_logger().warn(
+                    f'[exec] panoramic: timeout en paso {i + 1}, continuando')
+            # Pausa para que la imagen se estabilice antes de la captura.
+            time.sleep(_PANORAMIC_STABILIZE_S)
+            self._publish_result(
+                'panoramic_step', 'capture',
+                f'captura {i + 1}/{n_steps}',
+                step=i + 1, total=n_steps,
+            )
+            completed += 1
+            # Pequeña pausa para que brain_node procese el evento capture.
+            time.sleep(_PANORAMIC_CAPTURE_WAIT_S)
+
+        # Vuelta al yaw inicial (≈ no-op si hemos girado exactamente 360°).
+        if not self._rotate_to_yaw(start_yaw, _ROTATE_TIMEOUT_S):
+            self.get_logger().warn(
+                '[exec] panoramic: no pudo volver exactamente al yaw inicial')
+
+        self._publish_result(
+            'panoramic', 'succeeded',
+            f'panorámica completada: {completed} frames capturados',
+            steps=completed,
+        )
 
     # ======================================================= control loops
 
@@ -428,14 +512,14 @@ class ActionExecutorNode(Node):
 
     # ============================================================== output
 
-    def _publish_result(self, action: str, status: str, message: str):
+    def _publish_result(self, action: str, status: str, message: str, **extra):
+        payload = {'action': action, 'status': status, 'message': message}
+        payload.update(extra)
         msg = String()
-        msg.data = json.dumps({
-            'action': action, 'status': status, 'message': message,
-        }, ensure_ascii=False)
+        msg.data = json.dumps(payload, ensure_ascii=False)
         self._pub_result.publish(msg)
         log = self.get_logger()
-        if status == 'succeeded':
+        if status in ('succeeded', 'capture'):
             log.info(f'[exec] resultado: {msg.data}')
         elif status == 'not_implemented_yet':
             log.warn(f'[exec] resultado: {msg.data}')

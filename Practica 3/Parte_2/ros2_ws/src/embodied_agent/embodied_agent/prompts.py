@@ -104,6 +104,45 @@ Reglas estrictas:
   al usuario que te oriente.
 """
 
+# Contexto inyectado automáticamente tras completar una panorámica.
+# Se envía junto con todas las imágenes capturadas en los distintos ángulos.
+PANORAMIC_USER_TEXT = """Has completado una vista panorámica de {degrees:.0f}° capturando {n_frames} imágenes \
+en distintos ángulos (orden: izquierda a derecha, de la posición inicial).
+
+Modo actual: {mode}
+Pose actual: {pose}
+
+Pistas acumuladas previamente:
+{observations}
+
+Analiza TODAS las imágenes que recibes (aparecen en el orden de la panorámica).
+Identifica todos los objetos que podrían ser pistas para la investigación.
+Describe brevemente el conjunto de la escena y señala los puntos de interés \
+más relevantes que merece la pena inspeccionar de cerca.
+Si estás en modo AUTÓNOMO, propón los próximos pasos. En modo GUIADO, \
+resume los puntos de interés para que el usuario decida qué inspeccionar.
+"""
+
+# Contexto inyectado automáticamente al llegar junto a un objetivo (inspect).
+# Se envía con el frame capturado en la posición de inspección cercana.
+INSPECT_USER_TEXT = """Acabas de llegar junto a "{target}" y tienes una imagen de cerca.
+
+Modo actual: {mode}
+Pose actual: {pose}
+
+Pistas acumuladas previamente:
+{observations}
+
+Analiza la imagen detalladamente como detective:
+- ¿Qué ves exactamente? Describe detalles que no se apreciarían desde lejos.
+- ¿Hay pistas nuevas que no estaban en las observaciones previas?
+- ¿Qué conclusiones preliminares puedes extraer de esta pista de cerca?
+
+Responde en primera persona, conciso, como detective describiendo lo que \
+observa al inspeccionar de cerca. Si detectas algo relevante bajo un mueble \
+o en un ángulo bajo, menciónalo explícitamente como ventaja de tu altura.
+"""
+
 # Plantilla de contexto inyectada en cada turno.
 # `pose`, `plan` e `investigation_observations` pueden contener "(ninguna)" /
 # "(sin plan activo)" cuando aún no aplican (modo guiado).
