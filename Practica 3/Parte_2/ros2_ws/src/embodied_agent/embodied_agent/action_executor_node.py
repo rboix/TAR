@@ -45,7 +45,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import String
 
 from embodied_agent.utils.geometry import pixel_to_3d, yaw_from_quaternion
@@ -85,6 +85,10 @@ _MAX_DRIVE_DIST_M = 3.0
 
 # Distancia de parada por defecto para inspect (más corta que navigate).
 _INSPECT_DEFAULT_STOP_M = 0.3
+
+# LIDAR safety stop: arco frontal que se vigila y distancia mínima libre.
+_LIDAR_FRONT_HALF_ANGLE_DEG = 30.0   # ±30° respecto al eje frontal del robot
+_LIDAR_STOP_DIST_M = 0.35            # para si algo está a menos de 35 cm
 
 # Panoramic: número de paradas por defecto en un giro de 360°.
 _PANORAMIC_DEFAULT_STEPS = 8
@@ -126,6 +130,12 @@ class ActionExecutorNode(Node):
         self._odom_lock = threading.Lock()
         self._latest_pose: Optional[tuple[float, float, float]] = None
 
+        self._scan_lock = threading.Lock()
+        self._latest_scan: Optional[LaserScan] = None
+
+        # Flag: la última llamada a _drive_forward se abortó por LIDAR.
+        self._drive_stopped_by_obstacle: bool = False
+
         # Lock de exclusión mutua para acciones físicas (no queremos dos
         # rotates concurrentes).
         self._busy = threading.Lock()
@@ -147,6 +157,8 @@ class ActionExecutorNode(Node):
             CameraInfo, '/camera/camera_info', self._on_camera_info, sensor_qos)
         self._sub_odom = self.create_subscription(
             Odometry, '/odom', self._on_odom, sensor_qos)
+        self._sub_scan = self.create_subscription(
+            LaserScan, '/scan', self._on_scan, sensor_qos)
         self._sub_cmd = self.create_subscription(
             String, '/action_command', self._on_command, 10)
 
@@ -189,6 +201,31 @@ class ActionExecutorNode(Node):
         yaw = yaw_from_quaternion(msg.pose.pose.orientation)
         with self._odom_lock:
             self._latest_pose = (float(p.x), float(p.y), float(yaw))
+
+    def _on_scan(self, msg: LaserScan):
+        with self._scan_lock:
+            self._latest_scan = msg
+
+    def _obstacle_ahead(self, threshold_m: float = _LIDAR_STOP_DIST_M) -> float | None:
+        """Devuelve la dist. al obstáculo más cercano en el arco frontal ±30°, o None si libre."""
+        with self._scan_lock:
+            scan = self._latest_scan
+        if scan is None:
+            return None
+        half = math.radians(_LIDAR_FRONT_HALF_ANGLE_DEG)
+        closest: float | None = None
+        for i, r in enumerate(scan.ranges):
+            if not math.isfinite(r) or r < scan.range_min:
+                continue
+            if r > threshold_m:
+                continue
+            angle = scan.angle_min + i * scan.angle_increment
+            # Normalizar a [-π, π] para comparar con 0 (frente del robot).
+            angle = math.atan2(math.sin(angle), math.cos(angle))
+            if abs(angle) <= half:
+                if closest is None or r < closest:
+                    closest = r
+        return closest
 
     # ============================================================== comando
 
@@ -365,9 +402,15 @@ class ActionExecutorNode(Node):
         # 5) Avanzar.
         if drive_dist > _DIST_TOLERANCE_M:
             if not self._drive_forward(drive_dist, timeout_s=_DRIVE_TIMEOUT_S):
-                self._publish_result(
-                    action_name, 'failed',
-                    'timeout cerrando lazo de avance')
+                if self._drive_stopped_by_obstacle:
+                    self._publish_result(
+                        action_name, 'failed',
+                        f'obstáculo detectado por LIDAR antes de llegar a '
+                        f'"{target_label}"')
+                else:
+                    self._publish_result(
+                        action_name, 'failed',
+                        'timeout cerrando lazo de avance')
                 return
 
         self._publish_result(
@@ -480,10 +523,14 @@ class ActionExecutorNode(Node):
         Asume que ya estamos apuntando al objetivo. Solo `linear.x > 0`,
         no corrige deriva angular durante el avance (suficiente para
         distancias cortas en el demo).
+
+        Para si el LIDAR detecta un obstáculo a menos de _LIDAR_STOP_DIST_M
+        en el arco frontal (±30°). En ese caso fija _drive_stopped_by_obstacle=True.
         """
         clock = self.get_clock()
         end_time = clock.now() + Duration(seconds=timeout_s)
         period_s = 1.0 / _CMD_VEL_RATE_HZ
+        self._drive_stopped_by_obstacle = False
 
         with self._odom_lock:
             if self._latest_pose is None:
@@ -492,6 +539,16 @@ class ActionExecutorNode(Node):
 
         twist = Twist()
         while rclpy.ok() and clock.now() < end_time:
+            # ── Safety stop por LIDAR ──────────────────────────────────────
+            obs_dist = self._obstacle_ahead()
+            if obs_dist is not None:
+                self._pub_cmd_vel.publish(Twist())
+                self._drive_stopped_by_obstacle = True
+                self.get_logger().warn(
+                    f'[exec] LIDAR: obstáculo a {obs_dist:.2f} m en el arco '
+                    f'frontal — detenido')
+                return False
+            # ──────────────────────────────────────────────────────────────
             with self._odom_lock:
                 if self._latest_pose is None:
                     return False
