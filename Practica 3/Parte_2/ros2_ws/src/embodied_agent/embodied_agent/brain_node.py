@@ -27,6 +27,8 @@ from embodied_agent.memory import AgentMemory
 from embodied_agent.prompts import (
     SYSTEM_PROMPT, CONTEXT_TEMPLATE,
     PANORAMIC_USER_TEXT, INSPECT_USER_TEXT,
+    INVESTIGATION_PLAN_USER_TEXT, INVESTIGATION_STEP_USER_TEXT,
+    INVESTIGATION_HYPOTHESIS_USER_TEXT,
 )
 from embodied_agent.schemas import GeminiResponse
 
@@ -61,6 +63,11 @@ class BrainNode(Node):
         self._panoramic_lock = threading.Lock()
         # Grados totales de la panorámica en curso (para el prompt).
         self._panoramic_degrees: float = 360.0
+
+        # Estado de la investigación autónoma (Fase 7).
+        self._investigation_active: bool = False
+        self._investigation_plan: list[dict] = []
+        self._investigation_step: int = 0
 
         self._sub_speech = self.create_subscription(
             String, '/user_speech', self._on_user_speech, 10)
@@ -136,7 +143,38 @@ class BrainNode(Node):
                 # El reset ya emite voz y guarda el turno por su cuenta.
                 return
 
-            self._maybe_update_mode(user_text)
+            should_investigate = self._maybe_update_mode(user_text)
+
+            # Trigger de investigación autónoma: cortocircuitar Gemini y
+            # disparar directamente la secuencia panoramic → plan → pasos.
+            if should_investigate and not self._investigation_active:
+                speech = (
+                    'Entendido. Voy a investigar la escena de forma autónoma. '
+                    'Comenzando con una vista panorámica completa.'
+                )
+                self._publish_speech(speech)
+                self._memory.add_turn(
+                    user=user_text, robot_said=speech, action='investigate')
+                self._investigation_active = True
+                self._investigation_step = 0
+                self._investigation_plan = []
+                self._memory.reset_investigation()
+                self._memory.set_mode('autonomous')
+                with self._panoramic_lock:
+                    self._panoramic_frames.clear()
+                self._panoramic_degrees = 360.0
+                payload = {
+                    'action': 'panoramic',
+                    'target': None, 'image_bbox': None,
+                    'distance': None, 'degrees': 360.0,
+                }
+                action_msg = String()
+                action_msg.data = json.dumps(payload, ensure_ascii=False)
+                self._pub_action.publish(action_msg)
+                self.get_logger().info(
+                    '[brain] investigate → panoramic 360° (disparado por keyword, '
+                    'sin pasar por Gemini)')
+                return
 
             with self._frame_lock:
                 image_bytes = self._latest_frame
@@ -213,16 +251,23 @@ class BrainNode(Node):
         )
         return True
 
-    def _maybe_update_mode(self, user_text: str) -> None:
+    def _maybe_update_mode(self, user_text: str) -> bool:
+        """Actualiza el modo según el texto del usuario.
+
+        Devuelve True si se detectaron triggers de investigación autónoma
+        (el caller debe iniciar la secuencia sin pasar por Gemini).
+        """
         low = user_text.lower()
         if any(k in low for k in _AUTONOMOUS_TRIGGERS):
             if self._memory.mode != 'autonomous':
                 self.get_logger().info('[brain] cambiando a modo AUTÓNOMO')
                 self._memory.set_mode('autonomous')
+            return True
         elif any(k in low for k in _GUIDED_TRIGGERS):
             if self._memory.mode != 'guided':
                 self.get_logger().info('[brain] cambiando a modo GUIADO')
                 self._memory.set_mode('guided')
+        return False
 
     def _build_context(self, user_text: str) -> str:
         return CONTEXT_TEMPLATE.format(
@@ -307,6 +352,28 @@ class BrainNode(Node):
             "degrees":     float | None,   # grados, para rotate/panoramic
           }
         """
+        # investigate → iniciar secuencia autónoma: reset + panoramic 360°.
+        if response.action == 'investigate':
+            self._investigation_active = True
+            self._investigation_step = 0
+            self._investigation_plan = []
+            self._memory.reset_investigation()
+            self._memory.set_mode('autonomous')
+            with self._panoramic_lock:
+                self._panoramic_frames.clear()
+            self._panoramic_degrees = 360.0
+            payload = {
+                'action': 'panoramic',
+                'target': None, 'image_bbox': None,
+                'distance': None, 'degrees': 360.0,
+            }
+            msg = String()
+            msg.data = json.dumps(payload, ensure_ascii=False)
+            self._pub_action.publish(msg)
+            self.get_logger().info(
+                '[brain] investigate → dispatching panoramic 360°')
+            return
+
         # Para panoramic: reiniciar la lista de frames acumulados y guardar grados.
         if response.action == 'panoramic':
             with self._panoramic_lock:
@@ -317,11 +384,6 @@ class BrainNode(Node):
                 f'[brain] panoramic iniciada: '
                 f'{self._panoramic_degrees:.0f}°, frames reiniciados'
             )
-        if response.action in ('none', 'ask_user'):
-            # No hace falta despachar: no movemos al robot. Pero igual
-            # mandamos el comando para que el executor cierre el lazo y
-            # quede traza en /action_result.
-            pass
         params = response.action_params
         payload = {
             'action': response.action,
@@ -400,6 +462,29 @@ class BrainNode(Node):
                     self._publish_speech(speech)
             return
 
+        # Acciones básicas en modo investigación autónoma.
+        if self._investigation_active:
+            if action == 'navigate' and status == 'succeeded':
+                # Gemini devolvió navigate en vez de inspect — forzamos inspect
+                with self._frame_lock:
+                    frame = self._latest_frame
+                step = self._investigation_plan[self._investigation_step]
+                target = step.get('target', '')
+                threading.Thread(
+                    target=self._inspect_followup,
+                    args=(frame, target),
+                    daemon=True,
+                ).start()
+                return
+            if action == 'rotate' and status == 'succeeded':
+                # Giramos para ver el objetivo — reintentar navegación al paso
+                threading.Thread(
+                    target=self._navigate_to_investigation_step,
+                    args=(self._investigation_step,),
+                    daemon=True,
+                ).start()
+                return
+
         # Acciones básicas (navigate, rotate): confirmar por voz.
         if action not in ('navigate', 'rotate'):
             return
@@ -427,10 +512,13 @@ class BrainNode(Node):
         return None
 
     def _panoramic_followup(self, frames: list[bytes], degrees: float) -> None:
-        """Llama a Gemini con todos los frames de la panorámica para análisis."""
+        """Llama a Gemini con todos los frames de la panorámica."""
         if not frames:
             self._publish_speech(
                 'He completado la rotación, pero no he podido capturar imágenes.')
+            if self._investigation_active:
+                self._investigation_active = False
+            self._signal_ready()
             return
         if self._processing:
             self.get_logger().warn(
@@ -438,46 +526,91 @@ class BrainNode(Node):
             self._publish_speech(
                 'He completado la panorámica, pero estaba ocupado analizando '
                 'otra cosa. Puedes pedirme que describa lo que veo.')
+            if self._investigation_active:
+                self._investigation_active = False
+            self._signal_ready()
             return
         self._processing = True
+        _chain = None  # callable a ejecutar después de liberar _processing
         try:
-            self.get_logger().info(
-                f'[brain] panoramic followup: Gemini ← {len(frames)} frames')
-            context = PANORAMIC_USER_TEXT.format(
-                degrees=degrees,
-                n_frames=len(frames),
-                mode=self._memory.format_mode(),
-                pose=self._memory.format_pose(),
-                observations=self._memory.format_observations(),
-            )
-            raw = call_gemini(SYSTEM_PROMPT, context, images=frames)
-            self._maybe_fix_bbox(raw, self._latest_frame_wh)
-            response = self._validate_response(raw)
-            self._publish_speech(response.speech)
-            if response.observations:
-                self._memory.add_observations(
-                    [o.model_dump() for o in response.observations])
-            self._memory.add_turn(
-                user='[panorámica automática]',
-                robot_said=response.speech,
-                action='panoramic',
-            )
-            self._save_interaction(
-                '[panorámica automática]', response, elapsed=0.0)
+            if self._investigation_active:
+                # ── Modo investigación autónoma: generar plan ──────────────
+                self.get_logger().info(
+                    f'[brain] investigación: Gemini ← {len(frames)} frames '
+                    f'(generando plan)')
+                context = INVESTIGATION_PLAN_USER_TEXT.format(
+                    n_frames=len(frames),
+                    pose=self._memory.format_pose(),
+                    observations=self._memory.format_observations(),
+                )
+                raw = call_gemini(SYSTEM_PROMPT, context, images=frames)
+                plan = raw.get('investigation_plan') or []
+                speech = (raw.get('speech') or
+                          'He analizado la escena. Voy a comenzar la inspección.')
+                self._investigation_plan = plan
+                self._memory.set_plan(plan)
+                self._publish_speech(speech)
+                self._memory.add_turn(
+                    user='[panorámica de investigación]',
+                    robot_said=speech,
+                    action='panoramic',
+                )
+                if plan:
+                    self.get_logger().info(
+                        f'[brain] plan generado: {len(plan)} pasos')
+                    _chain = lambda: self._navigate_to_investigation_step(0)
+                else:
+                    self.get_logger().warn('[brain] Gemini no devolvió plan')
+                    self._publish_speech(
+                        'No he podido generar un plan de inspección. '
+                        'Puedes guiarme manualmente.')
+                    self._investigation_active = False
+            else:
+                # ── Modo guiado: descripción normal de la panorámica ───────
+                self.get_logger().info(
+                    f'[brain] panoramic followup: Gemini ← {len(frames)} frames')
+                context = PANORAMIC_USER_TEXT.format(
+                    degrees=degrees,
+                    n_frames=len(frames),
+                    mode=self._memory.format_mode(),
+                    pose=self._memory.format_pose(),
+                    observations=self._memory.format_observations(),
+                )
+                raw = call_gemini(SYSTEM_PROMPT, context, images=frames)
+                self._maybe_fix_bbox(raw, self._latest_frame_wh)
+                response = self._validate_response(raw)
+                self._publish_speech(response.speech)
+                if response.observations:
+                    self._memory.add_observations(
+                        [o.model_dump() for o in response.observations])
+                self._memory.add_turn(
+                    user='[panorámica automática]',
+                    robot_said=response.speech,
+                    action='panoramic',
+                )
+                self._save_interaction(
+                    '[panorámica automática]', response, elapsed=0.0)
         except ValidationError as e:
             self.get_logger().error(
                 f'[brain] panoramic followup JSON inválido: {e.errors()}')
             self._publish_speech(
                 'He completado la panorámica, pero tuve un problema al '
                 'analizar las imágenes.')
+            if self._investigation_active:
+                self._investigation_active = False
         except Exception as e:
             self.get_logger().error(f'[brain] panoramic followup error: {e}')
             self._publish_speech(
                 'He completado la panorámica. Puedes pedirme que describa '
                 'lo que veo.')
+            if self._investigation_active:
+                self._investigation_active = False
         finally:
             self._processing = False
-            self._signal_ready()
+            if _chain is not None:
+                threading.Thread(target=_chain, daemon=True).start()
+            else:
+                self._signal_ready()
 
     def _inspect_followup(self, frame: bytes | None, target: str) -> None:
         """Llama a Gemini con el frame cercano para análisis detallado."""
@@ -485,12 +618,24 @@ class BrainNode(Node):
             self.get_logger().warn(
                 '[brain] inspect followup: brain ocupado, fallback speech')
             self._publish_speech('Ya estoy aquí.')
+            if self._investigation_active:
+                self._investigation_active = False
+                self._signal_ready()
             return
         if frame is None:
             self._publish_speech(
                 'He llegado, pero no tengo imagen para analizar.')
+            if self._investigation_active:
+                # Continuar con el siguiente paso aunque no haya imagen
+                next_idx = self._investigation_step + 1
+                threading.Thread(
+                    target=self._navigate_to_investigation_step,
+                    args=(next_idx,), daemon=True).start()
+            else:
+                self._signal_ready()
             return
         self._processing = True
+        _chain = None
         try:
             self.get_logger().info(
                 f'[brain] inspect followup: Gemini ← frame cercano '
@@ -515,14 +660,200 @@ class BrainNode(Node):
             )
             self._save_interaction(
                 f'[inspección de "{target}"]', response, elapsed=0.0)
+
+            if self._investigation_active:
+                # Registrar observación del paso y avanzar
+                self._memory.add_investigation_observation(
+                    step=self._investigation_step + 1,
+                    target=target,
+                    observation=response.speech,
+                )
+                self._memory.update_plan_step(
+                    self._investigation_step + 1, 'completed')
+                next_idx = self._investigation_step + 1
+                if next_idx >= len(self._investigation_plan):
+                    _chain = self._investigation_final_hypothesis
+                else:
+                    _chain = lambda idx=next_idx: (
+                        self._navigate_to_investigation_step(idx))
         except ValidationError as e:
             self.get_logger().error(
                 f'[brain] inspect followup JSON inválido: {e.errors()}')
             self._publish_speech('Ya estoy aquí.')
+            if self._investigation_active:
+                next_idx = self._investigation_step + 1
+                _chain = lambda idx=next_idx: (
+                    self._navigate_to_investigation_step(idx))
         except Exception as e:
             self.get_logger().error(f'[brain] inspect followup error: {e}')
             self._publish_speech('Ya estoy aquí.')
+            if self._investigation_active:
+                next_idx = self._investigation_step + 1
+                _chain = lambda idx=next_idx: (
+                    self._navigate_to_investigation_step(idx))
         finally:
+            self._processing = False
+            if _chain is not None:
+                threading.Thread(target=_chain, daemon=True).start()
+            else:
+                self._signal_ready()
+
+    def _navigate_to_investigation_step(self, step_idx: int) -> None:
+        """Llama a Gemini para navegar al objetivo del paso `step_idx`."""
+        if not self._investigation_active:
+            return
+        if step_idx >= len(self._investigation_plan):
+            threading.Thread(
+                target=self._investigation_final_hypothesis,
+                daemon=True).start()
+            return
+
+        step = self._investigation_plan[step_idx]
+        self._investigation_step = step_idx
+        target = step.get('target', f'objetivo {step_idx + 1}')
+        reason = step.get('reason', '')
+        n_total = len(self._investigation_plan)
+
+        # Esperar a que _processing quede libre (max 30 s)
+        for _ in range(300):
+            if not self._processing:
+                break
+            time.sleep(0.1)
+        else:
+            self.get_logger().error(
+                '[brain] timeout esperando _processing para paso investigación')
+            self._investigation_active = False
+            self._signal_ready()
+            return
+
+        self._processing = True
+        _chain = None
+        try:
+            self._memory.update_plan_step(step_idx + 1, 'in_progress')
+            with self._frame_lock:
+                image_bytes = self._latest_frame
+                frame_wh = self._latest_frame_wh
+
+            context = INVESTIGATION_STEP_USER_TEXT.format(
+                step=step_idx + 1,
+                total=n_total,
+                target=target,
+                reason=reason,
+                mode=self._memory.format_mode(),
+                pose=self._memory.format_pose(),
+                observations=self._memory.format_observations(),
+                plan=self._memory.format_plan(),
+            )
+            self.get_logger().info(
+                f'[brain] investigación paso {step_idx+1}/{n_total}: "{target}"')
+            t0 = time.time()
+            raw = call_gemini(SYSTEM_PROMPT, context, image_bytes=image_bytes)
+            elapsed = time.time() - t0
+            self._maybe_fix_bbox(raw, frame_wh)
+            response = self._validate_response(raw)
+
+            self._publish_speech(response.speech)
+            if response.observations:
+                self._memory.add_observations(
+                    [o.model_dump() for o in response.observations])
+            self._memory.add_turn(
+                user=f'[investigación paso {step_idx+1}: {target}]',
+                robot_said=response.speech,
+                action=response.action,
+            )
+            self._save_interaction(
+                f'[investigación paso {step_idx+1}]', response, elapsed)
+
+            # Despachar acción (inspect/rotate — nunca investigate)
+            params = response.action_params
+            payload = {
+                'action': response.action,
+                'target': params.target,
+                'image_bbox': params.image_bbox,
+                'distance': params.distance,
+                'degrees': params.degrees,
+            }
+            msg = String()
+            msg.data = json.dumps(payload, ensure_ascii=False)
+            self._pub_action.publish(msg)
+            self.get_logger().info(
+                f'[brain] investigación paso {step_idx+1} → /action_command '
+                f'{msg.data}')
+
+        except ValidationError as e:
+            self.get_logger().error(
+                f'[brain] navigate_to_step JSON inválido: {e.errors()}')
+            # Saltar al siguiente paso
+            next_idx = step_idx + 1
+            _chain = lambda idx=next_idx: self._navigate_to_investigation_step(idx)
+        except Exception as e:
+            self.get_logger().error(f'[brain] navigate_to_step error: {e}')
+            next_idx = step_idx + 1
+            _chain = lambda idx=next_idx: self._navigate_to_investigation_step(idx)
+        finally:
+            self._processing = False
+            if _chain is not None:
+                threading.Thread(target=_chain, daemon=True).start()
+            # Caso normal: esperamos que _on_action_result dispare el siguiente paso
+
+    def _investigation_final_hypothesis(self) -> None:
+        """Llamada tras completar todos los pasos del plan."""
+        # Esperar _processing libre
+        for _ in range(300):
+            if not self._processing:
+                break
+            time.sleep(0.1)
+        else:
+            self.get_logger().error('[brain] timeout para hipótesis final')
+            self._investigation_active = False
+            self._signal_ready()
+            return
+
+        self._processing = True
+        try:
+            with self._frame_lock:
+                image_bytes = self._latest_frame
+
+            context = INVESTIGATION_HYPOTHESIS_USER_TEXT.format(
+                n_steps=len(self._investigation_plan),
+                all_observations=self._memory.format_observations(),
+                step_observations=self._memory.format_investigation_observations(),
+                pose=self._memory.format_pose(),
+            )
+            self.get_logger().info('[brain] investigación: generando hipótesis final')
+            t0 = time.time()
+            raw = call_gemini(SYSTEM_PROMPT, context, image_bytes=image_bytes)
+            elapsed = time.time() - t0
+            speech = (raw.get('speech') or
+                      'He completado la investigación autónoma.')
+            self._publish_speech(speech)
+            self._memory.add_turn(
+                user='[hipótesis final]',
+                robot_said=speech,
+                action='none',
+            )
+            entry = {
+                'timestamp': time.strftime('%H:%M:%S'),
+                'mode': self._memory.mode,
+                'pose': list(self._memory.get_pose()),
+                'observations_total': len(self._memory.observations),
+                'user': '[hipótesis final]',
+                'response': raw,
+                'latency_s': round(elapsed, 2),
+            }
+            try:
+                with INTERACTIONS_FILE.open('a', encoding='utf-8') as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+            self.get_logger().info('[brain] investigación autónoma completada')
+        except Exception as e:
+            self.get_logger().error(f'[brain] hipótesis final error: {e}')
+            self._publish_speech(
+                'He completado la investigación. '
+                'Puedes preguntarme mis conclusiones.')
+        finally:
+            self._investigation_active = False
             self._processing = False
             self._signal_ready()
 

@@ -143,6 +143,97 @@ observa al inspeccionar de cerca. Si detectas algo relevante bajo un mueble \
 o en un ángulo bajo, menciónalo explícitamente como ventaja de tu altura.
 """
 
+# ── Fase 7 ─────────────────────────────────────────────────────────────────
+
+# Enviado con TODOS los frames de la panorámica para generar el plan.
+# La respuesta DEBE incluir el campo extra "investigation_plan".
+INVESTIGATION_PLAN_USER_TEXT = """Has completado una vista panorámica de 360° capturando {n_frames} imágenes \
+(orden: desde la posición inicial girando en sentido antihorario).
+
+Modo: AUTÓNOMO — el usuario ha pedido que investigues por tu cuenta.
+Pose actual: {pose}
+Pistas previas: {observations}
+
+Analiza TODAS las imágenes y genera un plan de inspección priorizado.
+Devuelve el JSON con este esquema (y NADA más fuera del JSON):
+
+{{
+  "action": "investigate",
+  "investigation_plan": [
+    {{
+      "step": 1,
+      "target": "descripción del objeto o zona a inspeccionar",
+      "approximate_direction": "frente | izquierda | derecha | atrás",
+      "reason": "por qué es prioritario"
+    }}
+  ],
+  "initial_assessment": "descripción breve del conjunto de la escena",
+  "speech": "Lo que el robot dice en voz alta al anunciar el plan (≤ 3 frases)",
+  "reasoning": "tu razonamiento interno",
+  "action_params": {{}},
+  "observations": []
+}}
+
+Ordena el plan por prioridad de pistas (lo más relevante primero).
+Limita a un máximo de 4 pasos para que la investigación sea ágil.
+"""
+
+# Enviado en cada paso del plan para navegar/inspeccionar el objetivo.
+# Gemini debe devolver un GeminiResponse normal con action="inspect".
+INVESTIGATION_STEP_USER_TEXT = """Estás ejecutando el paso {step} de {total} del plan de investigación autónoma.
+
+Objetivo de este paso: "{target}"
+Motivo: {reason}
+
+Modo: {mode} | Pose: {pose}
+
+Plan completo:
+{plan}
+
+Pistas acumuladas hasta ahora:
+{observations}
+
+Tu tarea: localiza "{target}" en la imagen actual y decide cómo llegar a él.
+- Si ves el objeto claramente → usa action="inspect" con su bounding box.
+- Si necesitas girar para verlo → usa action="rotate" con los grados necesarios.
+- "speech": anuncia en 1 frase qué vas a hacer ("Voy a inspeccionar...").
+
+Recuerda: usa SIEMPRE action="inspect" (no "navigate") para que al llegar
+se realice automáticamente el análisis de cerca.
+"""
+
+# Enviado tras completar todos los pasos del plan.
+INVESTIGATION_HYPOTHESIS_USER_TEXT = """Has completado la investigación autónoma ({n_steps} pasos).
+
+Pose actual: {pose}
+
+Observaciones acumuladas (pistas generales):
+{all_observations}
+
+Observaciones detalladas por paso:
+{step_observations}
+
+Sintetiza TODAS las pistas y formula tu HIPÓTESIS FINAL sobre qué ha ocurrido.
+Razona como un detective: encadena las pistas en una historia coherente.
+
+Devuelve este JSON:
+{{
+  "action": "none",
+  "speech": "Presentación oral de la hipótesis final (2-4 frases, en primera persona)",
+  "final_hypothesis": {{
+    "summary": "Resumen de una frase de qué crees que ha pasado",
+    "evidence": ["Pista 1 que apoya la hipótesis", "Pista 2", "..."],
+    "confidence": "alta | media | baja",
+    "alternative_hypotheses": ["Hipótesis alternativa si la hay"]
+  }},
+  "reasoning": "tu razonamiento interno detallado",
+  "action_params": {{}},
+  "observations": []
+}}
+"""
+
+# ── Fin Fase 7 ──────────────────────────────────────────────────────────────
+
 # Plantilla de contexto inyectada en cada turno.
 # `pose`, `plan` e `investigation_observations` pueden contener "(ninguna)" /
 # "(sin plan activo)" cuando aún no aplican (modo guiado).

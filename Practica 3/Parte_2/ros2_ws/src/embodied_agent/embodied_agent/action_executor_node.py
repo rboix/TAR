@@ -208,9 +208,10 @@ class ActionExecutorNode(Node):
                                  'no se requiere acción física')
             return
         if action == 'investigate':
-            self._publish_result(
-                action, 'not_implemented_yet',
-                'la acción "investigate" se implementa en Fase 7')
+            # La orquestación de investigate vive en brain_node (Fase 7).
+            # action_executor no recibe nunca este comando en modo autónomo,
+            # pero si llega (bug), lo tratamos como no-op.
+            self._publish_result(action, 'succeeded', 'gestionado por brain_node')
             return
 
         if not self._busy.acquire(blocking=False):
