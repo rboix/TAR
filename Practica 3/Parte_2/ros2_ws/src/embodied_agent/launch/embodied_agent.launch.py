@@ -52,7 +52,7 @@ def generate_launch_description():
             parameters=[{'robot_ns': ns}],
             remappings=[
                 # Sensores del robot
-                ('/camera/depth',       ['/', ns, '/oakd/stereo/image_raw']),
+                ('/camera/depth',       ['/', ns, '/oakd/rgb/preview/image_raw']),
                 ('/camera/camera_info', ['/', ns, '/oakd/rgb/preview/camera_info']),
                 ('/odom',               ['/', ns, '/odom']),
                 ('/scan',               ['/', ns, '/scan']),
